@@ -1,7 +1,7 @@
 -- =====================================
 -- FINANCIAL TRACKER DATABASE DDL
 -- =====================================
--- Generato automaticamente il 2025-08-21 15:22:56
+-- Generato automaticamente il 2025-08-21 15:38:15
 -- 
 -- Questo script crea la struttura completa del database
 -- per il Financial Tracker. La transazione è atomica:
@@ -119,7 +119,7 @@ CREATE TABLE salaries.salaries (
     ral DECIMAL(15,2),
     gross_salary DECIMAL(15,2),
     net_salary DECIMAL(15,2),
-    13th DECIMAL(15,2),
+    thirteenth DECIMAL(15,2),
     salary_value DECIMAL(15,2)
 ,
     CONSTRAINT pk_salaries_salaries PRIMARY KEY (date)
@@ -131,7 +131,7 @@ CREATE TABLE savings.savings (
     ral DECIMAL(15,2),
     gross_salary DECIMAL(15,2),
     net_salary DECIMAL(15,2),
-    13th DECIMAL(15,2),
+    thirteenth DECIMAL(15,2),
     saving_value DECIMAL(15,2)
 ,
     CONSTRAINT pk_savings_savings PRIMARY KEY (date)
