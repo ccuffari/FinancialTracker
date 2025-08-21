@@ -1,53 +1,113 @@
-# db_structure_generator/excel_reader.py
-from openpyxl import load_workbook
-from typing import Dict, List, Tuple, Any
-from collections import defaultdict
+# models/python/db_structure_generator/excel_reader.py
+import pandas as pd
+from typing import Dict, List, Optional
+import logging
 
-def read_workbook(path: str, header_row: int = 1) -> Dict[str, Dict[str, Any]]:
+class ExcelReader:
     """
-    Legge il workbook e ritorna un dict:
-    {
-      "SheetName": {
-         "headers": ["col1","col2",...],
-         "columns": { "col1": [cell_values...], "col2": [...] },
-         "has_formula": { "col1": True/False, ... },
-         "first_formula_example": { "col1": "=SUM(...)", ...}
-      },
-      ...
-    }
+    Classe per leggere il file Excel e estrarre i dati dai fogli
     """
-    wb = load_workbook(path, data_only=False, read_only=True)
-    sheets = {}
-    for sheetname in wb.sheetnames:
-        ws = wb[sheetname]
-        headers = []
-        # header row assumed header_row (1-indexed)
-        header_cells = list(ws[header_row])
-        headers = [ (c.value or "").strip() if c.value is not None else f"col_{i}" for i,c in enumerate(header_cells, start=1) ]
-        # prepare list container for each column (rest rows)
-        cols = {h: [] for h in headers}
-        has_formula = {h: False for h in headers}
-        first_formula_example = {h: None for h in headers}
-        # iterate rows after header_row
-        for r in ws.iter_rows(min_row=header_row+1, values_only=False):
-            for i, cell in enumerate(r[:len(headers)]):
-                col_name = headers[i]
-                # if cell has formula, openpyxl stores cell.data_type == 'f' or cell.value startswith '='
-                val = cell.value
-                # record raw Excel cell value: if formula we capture formula text, else value
-                if getattr(cell, "data_type", None) == "f" or (isinstance(val, str) and val.startswith("=")):
-                    has_formula[col_name] = True
-                    if first_formula_example[col_name] is None:
-                        first_formula_example[col_name] = val
-                    # store the formula text as marker
-                    cols[col_name].append({"__formula__": val})
+    
+    def __init__(self, file_path: str):
+        self.file_path = file_path
+        self.logger = logging.getLogger(__name__)
+    
+    def read_all_sheets(self) -> Dict[str, pd.DataFrame]:
+        """
+        Legge tutti i fogli dal file Excel
+        
+        Returns:
+            Dict con nome foglio come chiave e DataFrame come valore
+        """
+        try:
+            # Leggi tutti i fogli
+            all_sheets = pd.read_excel(self.file_path, sheet_name=None)
+            
+            # Filtra i fogli validi (formato schema.tabella)
+            valid_sheets = {}
+            for sheet_name, df in all_sheets.items():
+                if self._is_valid_sheet(sheet_name):
+                    # Pulisci il DataFrame
+                    cleaned_df = self._clean_dataframe(df)
+                    if not cleaned_df.empty:
+                        valid_sheets[sheet_name] = cleaned_df
+                        self.logger.info(f"Foglio '{sheet_name}' caricato con {len(cleaned_df)} righe")
                 else:
-                    cols[col_name].append(val)
-        sheets[sheetname] = {
-            "headers": headers,
-            "columns": cols,
-            "has_formula": has_formula,
-            "first_formula_example": first_formula_example,
-            "raw_sheet_name": sheetname
-        }
-    return sheets
+                    self.logger.info(f"Foglio '{sheet_name}' ignorato (non valido o escluso)")
+            
+            return valid_sheets
+            
+        except Exception as e:
+            self.logger.error(f"Errore nella lettura del file Excel: {str(e)}")
+            raise
+    
+    def _is_valid_sheet(self, sheet_name: str) -> bool:
+        """
+        Verifica se un foglio è valido secondo i criteri specificati
+        
+        Args:
+            sheet_name: Nome del foglio
+            
+        Returns:
+            True se il foglio è valido
+        """
+        # Escludi public.overview
+        if sheet_name == "public.overview":
+            return False
+        
+        # Controlla formato schema.tabella
+        if '.' in sheet_name:
+            parts = sheet_name.split('.')
+            if len(parts) == 2 and all(part.strip() for part in parts):
+                return True
+        
+        return False
+    
+    def _clean_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Pulisce il DataFrame rimuovendo righe e colonne vuote
+        
+        Args:
+            df: DataFrame da pulire
+            
+        Returns:
+            DataFrame pulito
+        """
+        if df.empty:
+            return df
+        
+        # Rimuovi colonne completamente vuote
+        df = df.dropna(axis=1, how='all')
+        
+        # Rimuovi righe completamente vuote
+        df = df.dropna(axis=0, how='all')
+        
+        # Reset index
+        df = df.reset_index(drop=True)
+        
+        return df
+    
+    def get_column_names(self, df: pd.DataFrame) -> List[str]:
+        """
+        Estrae i nomi delle colonne dalla prima riga del DataFrame
+        
+        Args:
+            df: DataFrame di cui estrarre le colonne
+            
+        Returns:
+            Lista dei nomi delle colonne
+        """
+        if df.empty:
+            return []
+        
+        # I nomi delle colonne sono nella prima riga del DataFrame
+        column_names = df.columns.tolist()
+        
+        # Pulisci i nomi delle colonne
+        cleaned_names = []
+        for col in column_names:
+            if pd.isna(col) or str(col).strip() == '':
+                continue
+            cleaned_names.append(str(col).strip())
+        
+        return cleaned_names
