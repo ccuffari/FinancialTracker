@@ -1,0 +1,96 @@
+name: Manual - Generate SQL from Excel
+
+# solo manual trigger (azione eseguita dall'utente)
+on:
+  workflow_dispatch:
+    inputs:
+      excel_path:
+        description: 'Percorso del file Excel da elaborare (path relativo al repo)'
+        required: false
+        default: 'data/financialTracker.xlsx'
+      out_dir:
+        description: 'Directory di output per gli SQL generati (path relativo al repo)'
+        required: false
+        default: 'sql/ddl'
+      config_path:
+        description: 'Percorso del file di config (generator.yml)'
+        required: false
+        default: 'models/python/db_structure_generator/configs/generator.yml'
+      commit:
+        description: 'Se true, committa e push dei file generati nel repo'
+        required: false
+        default: 'false'
+      commit_message:
+        description: 'Messaggio commit (se commit=true)'
+        required: false
+        default: 'chore: generate SQL from Excel via workflow'
+      python_version:
+        description: 'Versione Python da usare'
+        required: false
+        default: '3.10'
+
+permissions:
+  contents: write  # necessario solo se si vogliono fare commit/push dal workflow
+
+jobs:
+  generate:
+    name: Generate SQL (manual)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ github.event.inputs.python_version }}
+
+      - name: Install dependencies (if requirements.txt present)
+        run: |
+          if [ -f requirements.txt ]; then
+            python -m pip install --upgrade pip
+            pip install -r requirements.txt
+          else
+            python -m pip install --upgrade pip
+            pip install openpyxl pandas python-dateutil pyyaml typer
+          fi
+
+      - name: Run DB structure generator
+        env:
+          # lasciamo disponibili le variabili d'ambiente per eventuali credenziali
+          # DB_USER: ${{ secrets.DB_USER }}
+          # DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          # ... (aggiungi se ti serve)
+        run: |
+          echo "Using excel: ${{ github.event.inputs.excel_path }}"
+          echo "Output dir: ${{ github.event.inputs.out_dir }}"
+          # esegui il module CLI come pacchetto (richiede __init__.py nella cartella)
+          python -m models.python.db_structure_generator.cli \
+            --excel_file "${{ github.event.inputs.excel_path }}" \
+            --out_dir "${{ github.event.inputs.out_dir }}" \
+            --config "${{ github.event.inputs.config_path }}"
+
+      - name: List generated files
+        run: |
+          echo "--- Contents of ${{ github.event.inputs.out_dir }} ---"
+          ls -la "${{ github.event.inputs.out_dir }}" || true
+
+      - name: Upload generated SQL as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-sql
+          path: ${{ github.event.inputs.out_dir }}
+
+      - name: Commit & push generated SQL (optional)
+        if: ${{ github.event.inputs.commit == 'true' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          git add "${{ github.event.inputs.out_dir }}" || true
+          git commit -m "${{ github.event.inputs.commit_message }}" || echo "Nothing to commit"
+          git push origin HEAD
