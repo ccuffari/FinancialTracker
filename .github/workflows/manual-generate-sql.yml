@@ -1,88 +1,125 @@
-name: Manual - Generate SQL from Excel
+# .github/workflows/generate-db-structure.yml
+name: Generate Database Structure
 
 on:
   workflow_dispatch:
     inputs:
-      excel_path:
-        description: 'Percorso del file Excel da elaborare (path relativo al repo)'
-        required: false
-        default: 'data/financialTracker.xlsx'
-      out_dir:
-        description: 'Directory di output per gli SQL generati (path relativo al repo)'
-        required: false
-        default: 'sql/ddl'
-      config_path:
-        description: 'Percorso del file di config (generator.yml)'
-        required: false
-        default: 'models/python/db_structure_generator/configs/generator.yml'
-      commit:
-        description: 'Se true, committa e push dei file generati nel repo'
-        required: false
-        default: 'false'
-      commit_message:
-        description: 'Messaggio commit (se commit=true)'
-        required: false
-        default: 'chore: generate SQL from Excel via workflow'
+      branch:
+        description: 'Branch da utilizzare'
+        required: true
+        default: 'main'
+        type: string
       python_version:
-        description: 'Versione Python da usare'
-        required: false
+        description: 'Versione Python'
+        required: true
         default: '3.10'
-
-permissions:
-  contents: write
+        type: choice
+        options:
+          - '3.8'
+          - '3.9'
+          - '3.10'
+          - '3.11'
+          - '3.12'
 
 jobs:
-  generate:
-    name: Generate SQL (manual)
+  generate-ddl:
     runs-on: ubuntu-latest
-
+    
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ github.event.inputs.python_version }}
-
-      - name: Install dependencies (if requirements.txt present)
-        run: |
-          python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then
-            pip install -r requirements.txt
-          else
-            pip install openpyxl pandas python-dateutil pyyaml typer
-          fi
-
-      - name: Run DB structure generator
-        run: |
-          echo "Using excel: ${{ github.event.inputs.excel_path }}"
-          echo "Output dir: ${{ github.event.inputs.out_dir }}"
-          python -m models.python.db_structure_generator.cli \
-            --excel-file "${{ github.event.inputs.excel_path }}" \
-            --out-dir "${{ github.event.inputs.out_dir }}" \
-            --config "${{ github.event.inputs.config_path }}"
-
-      - name: List generated files
-        run: |
-          echo "--- Contents of ${{ github.event.inputs.out_dir }} ---"
-          ls -la "${{ github.event.inputs.out_dir }}" || true
-
-      - name: Upload generated SQL as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: generated-sql
-          path: ${{ github.event.inputs.out_dir }}
-
-      - name: Commit & push generated SQL (optional)
-        if: ${{ github.event.inputs.commit == 'true' }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          git config user.name "${{ github.actor }}"
-          git config user.email "${{ github.actor }}@users.noreply.github.com"
-          git add "${{ github.event.inputs.out_dir }}" || true
-          git commit -m "${{ github.event.inputs.commit_message }}" || echo "Nothing to commit"
-          git push origin HEAD
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.inputs.branch }}
+    
+    - name: Set up Python ${{ github.event.inputs.python_version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ github.event.inputs.python_version }}
+    
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('models/python/db_structure_generator/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r models/python/db_structure_generator/requirements.txt
+    
+    - name: Verify Excel file exists
+      run: |
+        if [ ! -f "data/financialTracker.xlsx" ]; then
+          echo "❌ File data/financialTracker.xlsx non trovato!"
+          exit 1
+        fi
+        echo "✅ File Excel trovato"
+        ls -la data/financialTracker.xlsx
+    
+    - name: Create output directory
+      run: |
+        mkdir -p sql/ddl
+        echo "✅ Directory sql/ddl creata"
+    
+    - name: Generate database structure
+      run: |
+        cd models/python/db_structure_generator
+        python main.py
+    
+    - name: Verify generated SQL file
+      run: |
+        if [ ! -f "sql/ddl/financial_tracker_ddl.sql" ]; then
+          echo "❌ File SQL non generato!"
+          exit 1
+        fi
+        echo "✅ File SQL generato con successo"
+        echo "📊 Dimensione file: $(du -h sql/ddl/financial_tracker_ddl.sql | cut -f1)"
+        echo "📄 Prime 20 righe del file:"
+        head -20 sql/ddl/financial_tracker_ddl.sql
+    
+    - name: Upload SQL artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: database-ddl-${{ github.event.inputs.branch }}-py${{ github.event.inputs.python_version }}
+        path: sql/ddl/financial_tracker_ddl.sql
+        retention-days: 30
+    
+    - name: Display generation summary
+      run: |
+        echo "🎉 Generazione completata con successo!"
+        echo "📁 Branch utilizzato: ${{ github.event.inputs.branch }}"
+        echo "🐍 Python versione: ${{ github.event.inputs.python_version }}"
+        echo "📝 File generato: sql/ddl/financial_tracker_ddl.sql"
+        echo "💾 Artifact disponibile per il download per 30 giorni"
+        
+        # Statistiche del file
+        if [ -f "sql/ddl/financial_tracker_ddl.sql" ]; then
+          echo ""
+          echo "📊 Statistiche file generato:"
+          echo "   - Righe: $(wc -l < sql/ddl/financial_tracker_ddl.sql)"
+          echo "   - Caratteri: $(wc -c < sql/ddl/financial_tracker_ddl.sql)"
+          echo "   - Dimensione: $(du -h sql/ddl/financial_tracker_ddl.sql | cut -f1)"
+        fi
+    
+    # Opzionale: Commit automatico del file generato
+    - name: Commit generated SQL (optional)
+      if: github.event.inputs.branch == 'main' || github.event.inputs.branch == 'develop'
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        
+        if [ -n "$(git status --porcelain sql/ddl/)" ]; then
+          git add sql/ddl/financial_tracker_ddl.sql
+          git commit -m "🤖 Auto-generated database DDL from financialTracker.xlsx
+          
+          - Branch: ${{ github.event.inputs.branch }}
+          - Python: ${{ github.event.inputs.python_version }}
+          - Generated: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          
+          git push
+          echo "✅ File committato e pushato automaticamente"
+        else
+          echo "ℹ️ Nessuna modifica al file SQL da committare"
+        fi
