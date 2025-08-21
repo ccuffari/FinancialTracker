@@ -26,68 +26,25 @@ on:
         default: false
         type: boolean
 
-env:
-  PYTHON_VERSION: ${{ github.event.inputs.python_version }}
-  BRANCH_NAME: ${{ github.event.inputs.branch }}
-  DEPLOY_ENABLED: ${{ github.event.inputs.deploy_to_neon }}
-
 jobs:
-  # =====================================
-  # JOB 1: GENERAZIONE DDL
-  # =====================================
   generate-ddl:
-    name: 📝 Generate Database DDL
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-    
-    outputs:
-      ddl-generated: ${{ steps.generate.outputs.success }}
-      file-path: ${{ steps.generate.outputs.file-path }}
-      file-size: ${{ steps.generate.outputs.file-size }}
-      tables-count: ${{ steps.generate.outputs.tables-count }}
-      schemas-count: ${{ steps.generate.outputs.schemas-count }}
+      contents: write  # Permesso per scrivere nel repository
     
     steps:
-    - name: 🚀 Workflow Started
-      run: |
-        echo "::notice title=Workflow Started::Generazione struttura database iniziata"
-        echo "📋 Parametri ricevuti:"
-        echo "   🌿 Branch: ${{ env.BRANCH_NAME }}"
-        echo "   🐍 Python: ${{ env.PYTHON_VERSION }}"
-        echo "   🚀 Deploy: ${{ env.DEPLOY_ENABLED }}"
-        echo "   👤 Triggered by: ${{ github.actor }}"
-        echo "   🕐 Started at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-    
-    - name: 📥 Checkout Repository
+    - name: Checkout repository
       uses: actions/checkout@v4
       with:
-        ref: ${{ env.BRANCH_NAME }}
-        token: ${{ secrets.GITHUB_TOKEN }}
-      
-    - name: ✅ Repository Checked Out
-      run: |
-        echo "::notice title=Checkout Success::Repository checked out successfully"
-        echo "📁 Current directory: $(pwd)"
-        echo "📊 Repository info:"
-        echo "   📝 Commit: $(git rev-parse --short HEAD)"
-        echo "   👤 Author: $(git log -1 --pretty=format:'%an')"
-        echo "   📅 Date: $(git log -1 --pretty=format:'%ad')"
-        echo "   💬 Message: $(git log -1 --pretty=format:'%s')"
+        ref: ${{ github.event.inputs.branch }}
+        token: ${{ secrets.GITHUB_TOKEN }}  # Usa il token per i permessi
     
-    - name: 🐍 Setup Python ${{ env.PYTHON_VERSION }}
+    - name: Set up Python ${{ github.event.inputs.python_version }}
       uses: actions/setup-python@v5
       with:
-        python-version: ${{ env.PYTHON_VERSION }}
+        python-version: ${{ github.event.inputs.python_version }}
     
-    - name: ✅ Python Setup Complete
-      run: |
-        echo "::notice title=Python Ready::Python ${{ env.PYTHON_VERSION }} configured successfully"
-        echo "🐍 Python version: $(python --version)"
-        echo "📦 Pip version: $(pip --version)"
-        echo "📍 Python location: $(which python)"
-    
-    - name: 💾 Cache Dependencies
+    - name: Cache pip dependencies
       uses: actions/cache@v4
       with:
         path: ~/.cache/pip
@@ -95,211 +52,52 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-pip-
     
-    - name: 📦 Install Dependencies
+    - name: Install dependencies
       run: |
-        echo "::group::📦 Installing Python Dependencies"
         python -m pip install --upgrade pip
-        
-        echo "📋 Installing requirements..."
         pip install -r models/python/db_structure_generator/requirements.txt
-        
-        echo "🗄️ Installing PostgreSQL client..."
-        pip install psycopg2-binary
-        
-        echo "✅ Dependencies installed successfully"
-        echo "📊 Installed packages:"
-        pip list | head -20
-        echo "::endgroup::"
+        pip install psycopg2-binary  # Per la connessione PostgreSQL
     
-    - name: 🔍 Verify Prerequisites
+    - name: Verify Excel file exists
       run: |
-        echo "::group::🔍 Verifying Prerequisites"
-        
-        # Verifica file Excel
         if [ ! -f "data/financialTracker.xlsx" ]; then
-          echo "::error title=Excel File Missing::File data/financialTracker.xlsx non trovato!"
+          echo "❌ File data/financialTracker.xlsx non trovato!"
           exit 1
         fi
-        
         echo "✅ File Excel trovato"
-        echo "📊 Excel file info:"
-        echo "   📁 Path: data/financialTracker.xlsx"
-        echo "   📏 Size: $(du -h data/financialTracker.xlsx | cut -f1)"
-        echo "   📅 Modified: $(stat -c '%y' data/financialTracker.xlsx)"
-        
-        # Verifica struttura progetto
-        echo "📂 Project structure verification:"
-        for dir in "models/python/db_structure_generator" "data"; do
-          if [ -d "$dir" ]; then
-            echo "   ✅ $dir exists"
-          else
-            echo "::error title=Directory Missing::Directory $dir not found!"
-            exit 1
-          fi
-        done
-        
-        echo "::endgroup::"
+        ls -la data/financialTracker.xlsx
     
-    - name: 📁 Create Output Directory
+    - name: Create output directory
       run: |
         mkdir -p sql/ddl
-        echo "::notice title=Directory Created::Output directory sql/ddl created"
-        echo "📁 Created directory: sql/ddl"
-        echo "🔧 Permissions: $(ls -la sql/ddl)"
+        echo "✅ Directory sql/ddl creata"
     
-    - name: 🔨 Generate Database Structure
-      id: generate
+    - name: Generate database structure
       run: |
-        echo "::group::🔨 Generating Database DDL"
         cd models/python/db_structure_generator
-        
-        echo "🚀 Starting DDL generation..."
-        if python main.py; then
-          echo "::notice title=Generation Success::DDL generated successfully"
-          echo "success=true" >> $GITHUB_OUTPUT
-          
-          # Torna alla root per verificare il file
-          cd ../../..
-          
-          if [ -f "sql/ddl/financial_tracker_ddl.sql" ]; then
-            file_size=$(du -h sql/ddl/financial_tracker_ddl.sql | cut -f1)
-            line_count=$(wc -l < sql/ddl/financial_tracker_ddl.sql)
-            char_count=$(wc -c < sql/ddl/financial_tracker_ddl.sql)
-            
-            echo "file-path=sql/ddl/financial_tracker_ddl.sql" >> $GITHUB_OUTPUT
-            echo "file-size=$file_size" >> $GITHUB_OUTPUT
-            
-            echo "📊 Generated file statistics:"
-            echo "   📁 File: sql/ddl/financial_tracker_ddl.sql"
-            echo "   📏 Size: $file_size"
-            echo "   📄 Lines: $line_count"
-            echo "   🔤 Characters: $char_count"
-            
-            # Estrai informazioni dal SQL generato
-            schema_count=$(grep -c "CREATE SCHEMA" sql/ddl/financial_tracker_ddl.sql || echo "0")
-            table_count=$(grep -c "CREATE TABLE" sql/ddl/financial_tracker_ddl.sql || echo "0")
-            
-            echo "schemas-count=$schema_count" >> $GITHUB_OUTPUT
-            echo "tables-count=$table_count" >> $GITHUB_OUTPUT
-            
-            echo "🏗️ Database structure:"
-            echo "   📊 Schemas: $schema_count"
-            echo "   🗂️ Tables: $table_count"
-            
-            echo "📖 First 10 lines of generated SQL:"
-            head -10 sql/ddl/financial_tracker_ddl.sql
-          else
-            echo "::error title=File Missing::Generated SQL file not found!"
-            echo "success=false" >> $GITHUB_OUTPUT
-            exit 1
-          fi
-        else
-          echo "::error title=Generation Failed::DDL generation failed"
-          echo "success=false" >> $GITHUB_OUTPUT
+        python main.py
+    
+    - name: Verify generated SQL file
+      run: |
+        if [ ! -f "sql/ddl/financial_tracker_ddl.sql" ]; then
+          echo "❌ File SQL non generato!"
           exit 1
         fi
-        echo "::endgroup::"
+        echo "✅ File SQL generato con successo"
+        echo "📊 Dimensione file: $(du -h sql/ddl/financial_tracker_ddl.sql | cut -f1)"
+        echo "📄 Prime 20 righe del file:"
+        head -20 sql/ddl/financial_tracker_ddl.sql
     
-    - name: 💾 Upload SQL Artifact
-      if: steps.generate.outputs.success == 'true'
+    - name: Upload SQL artifact
       uses: actions/upload-artifact@v4
       with:
-        name: database-ddl-${{ env.BRANCH_NAME }}-py${{ env.PYTHON_VERSION }}
+        name: database-ddl-${{ github.event.inputs.branch }}-py${{ github.event.inputs.python_version }}
         path: sql/ddl/financial_tracker_ddl.sql
         retention-days: 30
     
-    - name: ✅ Artifact Uploaded
-      if: steps.generate.outputs.success == 'true'
-      run: |
-        echo "::notice title=Artifact Ready::SQL artifact uploaded successfully"
-        echo "💾 Artifact name: database-ddl-${{ env.BRANCH_NAME }}-py${{ env.PYTHON_VERSION }}"
-        echo "⏰ Retention: 30 days"
-        echo "📥 Download available in Actions tab"
-    
-    - name: 📝 Commit Generated SQL
-      if: steps.generate.outputs.success == 'true' && (env.BRANCH_NAME == 'main' || env.BRANCH_NAME == 'develop')
-      run: |
-        echo "::group::📝 Committing Generated Files"
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        
-        if [ -n "$(git status --porcelain sql/ddl/)" ]; then
-          git add sql/ddl/financial_tracker_ddl.sql
-          git commit -m "🤖 Auto-generated database DDL from financialTracker.xlsx
-          
-          - Branch: ${{ env.BRANCH_NAME }}
-          - Python: ${{ env.PYTHON_VERSION }}
-          - Schemas: ${{ steps.generate.outputs.schemas-count }}
-          - Tables: ${{ steps.generate.outputs.tables-count }}
-          - Size: ${{ steps.generate.outputs.file-size }}
-          - Generated: $(date '+%Y-%m-%d %H:%M:%S UTC')"
-          
-          git push
-          echo "::notice title=Commit Success::Generated SQL committed and pushed"
-          echo "✅ File committed and pushed successfully"
-        else
-          echo "::warning title=No Changes::No changes to commit"
-          echo "ℹ️ Generated SQL file is identical to existing version"
-        fi
-        echo "::endgroup::"
-
-  # =====================================
-  # JOB 2: DEPLOY SU NEON (Condizionale)
-  # =====================================
-  deploy-to-neon:
-    name: 🚀 Deploy to Neon PostgreSQL
-    runs-on: ubuntu-latest
-    needs: generate-ddl
-    if: github.event.inputs.deploy_to_neon == 'true' && needs.generate-ddl.outputs.ddl-generated == 'true'
-    
-    steps:
-    - name: 🚀 Deploy Job Started
-      run: |
-        echo "::notice title=Deploy Started::Starting deployment to Neon PostgreSQL"
-        echo "🎯 Target: PostgreSQL Neon"
-        echo "📁 Branch: ${{ env.BRANCH_NAME }}"
-        echo "📊 Schemas to deploy: ${{ needs.generate-ddl.outputs.schemas-count }}"
-        echo "🗂️ Tables to deploy: ${{ needs.generate-ddl.outputs.tables-count }}"
-        echo "📏 File size: ${{ needs.generate-ddl.outputs.file-size }}"
-    
-    - name: 📥 Checkout Repository
-      uses: actions/checkout@v4
-      with:
-        ref: ${{ env.BRANCH_NAME }}
-    
-    - name: 🐍 Setup Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ env.PYTHON_VERSION }}
-    
-    - name: 📦 Install PostgreSQL Client
-      run: |
-        echo "::group::📦 Installing PostgreSQL Client"
-        python -m pip install --upgrade pip
-        pip install psycopg2-binary
-        echo "✅ PostgreSQL client installed"
-        echo "::endgroup::"
-    
-    - name: 📥 Download SQL Artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: database-ddl-${{ env.BRANCH_NAME }}-py${{ env.PYTHON_VERSION }}
-        path: ./sql-download
-    
-    - name: ✅ Artifact Downloaded
-      run: |
-        echo "::notice title=Artifact Downloaded::SQL file downloaded successfully"
-        if [ -f "./sql-download/financial_tracker_ddl.sql" ]; then
-          echo "✅ SQL file found in artifact"
-          echo "📏 Size: $(du -h ./sql-download/financial_tracker_ddl.sql | cut -f1)"
-          mkdir -p sql/ddl
-          cp ./sql-download/financial_tracker_ddl.sql sql/ddl/
-        else
-          echo "::error title=File Missing::SQL file not found in artifact"
-          exit 1
-        fi
-    
-    - name: 🔗 Test Database Connection
+    # Deploy su PostgreSQL Neon (opzionale)
+    - name: Deploy to PostgreSQL Neon
+      if: github.event.inputs.deploy_to_neon == 'true'
       env:
         PGHOST: ${{ secrets.PGHOST }}
         PGDATABASE: ${{ secrets.PGDATABASE }}
@@ -307,66 +105,15 @@ jobs:
         PGPASSWORD: ${{ secrets.PGPASSWORD }}
         PGSSLMODE: ${{ secrets.PGSSLMODE }}
       run: |
-        echo "::group::🔗 Testing Database Connection"
+        echo "🚀 Inizio deploy su PostgreSQL Neon..."
+        
+        # Test connessione database
         python -c "
         import psycopg2
         import os
         import sys
         
         try:
-            print('🔗 Attempting connection to Neon PostgreSQL...')
-            conn = psycopg2.connect(
-                host=os.environ['PGHOST'],
-                database=os.environ['PGDATABASE'], 
-                user=os.environ['PGUSER'],
-                password=os.environ['PGPASSWORD'],
-                sslmode=os.environ['PGSSLMODE'],
-                connect_timeout=30
-            )
-            
-            with conn.cursor() as cursor:
-                cursor.execute('SELECT version();')
-                version = cursor.fetchone()[0]
-                print(f'✅ Connection successful!')
-                print(f'📊 PostgreSQL version: {version}')
-                
-                cursor.execute('SELECT current_database(), current_user, inet_server_addr(), inet_server_port();')
-                db_info = cursor.fetchone()
-                print(f'🗄️ Database: {db_info[0]}')
-                print(f'👤 User: {db_info[1]}')
-                print(f'🌐 Server: {db_info[2]}:{db_info[3]}')
-            
-            conn.close()
-            
-        except Exception as e:
-            print(f'::error title=Connection Failed::Failed to connect to database: {str(e)}')
-            sys.exit(1)
-        "
-        echo "::endgroup::"
-    
-    - name: 🗄️ Execute Database DDL
-      env:
-        PGHOST: ${{ secrets.PGHOST }}
-        PGDATABASE: ${{ secrets.PGDATABASE }}
-        PGUSER: ${{ secrets.PGUSER }}
-        PGPASSWORD: ${{ secrets.PGPASSWORD }}
-        PGSSLMODE: ${{ secrets.PGSSLMODE }}
-      run: |
-        echo "::group::🗄️ Executing Database DDL"
-        python -c "
-        import psycopg2
-        import os
-        import sys
-        import time
-        
-        try:
-            print('📖 Reading SQL file...')
-            with open('sql/ddl/financial_tracker_ddl.sql', 'r', encoding='utf-8') as f:
-                sql_content = f.read()
-            
-            print(f'📊 SQL file loaded: {len(sql_content)} characters')
-            
-            print('🔗 Connecting to database...')
             conn = psycopg2.connect(
                 host=os.environ['PGHOST'],
                 database=os.environ['PGDATABASE'],
@@ -374,127 +121,89 @@ jobs:
                 password=os.environ['PGPASSWORD'],
                 sslmode=os.environ['PGSSLMODE']
             )
+            print('✅ Connessione al database riuscita')
             
-            print('🔄 Executing DDL (this may take a moment)...')
-            start_time = time.time()
-            
+            # Esegui il DDL
             with conn.cursor() as cursor:
+                print('📖 Lettura file SQL...')
+                with open('sql/ddl/financial_tracker_ddl.sql', 'r', encoding='utf-8') as f:
+                    sql_content = f.read()
+                
+                print('🔄 Esecuzione DDL sul database...')
                 cursor.execute(sql_content)
                 conn.commit()
-            
-            execution_time = time.time() - start_time
-            print(f'✅ DDL executed successfully in {execution_time:.2f} seconds!')
-            
-            # Verifica risultati
-            print('🔍 Verifying created objects...')
-            with conn.cursor() as cursor:
-                # Conta schemi
-                cursor.execute('''
-                    SELECT COUNT(*) FROM information_schema.schemata 
-                    WHERE schema_name NOT IN ('information_schema', 'pg_catalog', 'pg_toast', 'public');
-                ''')
-                schema_count = cursor.fetchone()[0]
+                print('✅ DDL eseguito con successo!')
                 
-                # Conta tabelle
+                # Verifica tabelle create
                 cursor.execute('''
                     SELECT schemaname, tablename 
                     FROM pg_tables 
-                    WHERE schemaname NOT IN ('information_schema', 'pg_catalog', 'pg_toast')
+                    WHERE schemaname NOT IN ('information_schema', 'pg_catalog')
                     ORDER BY schemaname, tablename;
                 ''')
                 tables = cursor.fetchall()
                 
-                # Conta vincoli FK
-                cursor.execute('''
-                    SELECT COUNT(*) FROM information_schema.table_constraints 
-                    WHERE constraint_type = 'FOREIGN KEY';
-                ''')
-                fk_count = cursor.fetchone()[0]
-                
-                print(f'📊 Deployment results:')
-                print(f'   🏗️ Schemas created: {schema_count}')
-                print(f'   🗂️ Tables created: {len(tables)}')
-                print(f'   🔗 Foreign keys: {fk_count}')
-                
-                if tables:
-                    print(f'📋 Created tables:')
-                    for schema, table in tables:
-                        print(f'   - {schema}.{table}')
+                print(f'📊 Tabelle create ({len(tables)}):')
+                for schema, table in tables:
+                    print(f'   - {schema}.{table}')
             
             conn.close()
-            print('🎉 Database deployment completed successfully!')
+            print('🎉 Deploy completato con successo!')
             
-        except psycopg2.Error as e:
-            print(f'::error title=Database Error::Database error during deployment: {str(e)}')
-            sys.exit(1)
         except Exception as e:
-            print(f'::error title=Deployment Failed::Unexpected error during deployment: {str(e)}')
+            print(f'❌ Errore durante il deploy: {str(e)}')
             sys.exit(1)
         "
-        echo "::endgroup::"
     
-    - name: 🎉 Deploy Complete
+    - name: Database deployment summary
+      if: github.event.inputs.deploy_to_neon == 'true'
       run: |
-        echo "::notice title=Deploy Success::Deployment to Neon PostgreSQL completed successfully"
-        echo "🎉 Database deployment successful!"
+        echo "🎉 Deploy su Neon completato!"
         echo "🌐 Host: ${{ secrets.PGHOST }}"
         echo "🗄️ Database: ${{ secrets.PGDATABASE }}"
         echo "👤 User: ${{ secrets.PGUSER }}"
-        echo "🔒 SSL: Enabled"
-        echo "⏰ Completed at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-
-  # =====================================
-  # JOB 3: SUMMARY FINALE
-  # =====================================
-  summary:
-    name: 📋 Workflow Summary
-    runs-on: ubuntu-latest
-    needs: [generate-ddl, deploy-to-neon]
-    if: always()
+        echo "🔒 SSL: Abilitato"
     
-    steps:
-    - name: 📋 Final Summary
+    - name: Display generation summary
       run: |
-        echo "::notice title=Workflow Complete::Database structure generation workflow completed"
-        echo "# 🎯 Workflow Summary" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "## 📋 Execution Details" >> $GITHUB_STEP_SUMMARY
-        echo "- **Branch**: ${{ env.BRANCH_NAME }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **Python Version**: ${{ env.PYTHON_VERSION }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **Triggered by**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **Timestamp**: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "🎉 Generazione completata con successo!"
+        echo "📁 Branch utilizzato: ${{ github.event.inputs.branch }}"
+        echo "🐍 Python versione: ${{ github.event.inputs.python_version }}"
+        echo "📝 File generato: sql/ddl/financial_tracker_ddl.sql"
+        echo "💾 Artifact disponibile per il download per 30 giorni"
         
-        echo "## 📝 DDL Generation" >> $GITHUB_STEP_SUMMARY
-        if [ "${{ needs.generate-ddl.result }}" == "success" ]; then
-          echo "- ✅ **Status**: Success" >> $GITHUB_STEP_SUMMARY
-          echo "- 📊 **Schemas**: ${{ needs.generate-ddl.outputs.schemas-count }}" >> $GITHUB_STEP_SUMMARY
-          echo "- 🗂️ **Tables**: ${{ needs.generate-ddl.outputs.tables-count }}" >> $GITHUB_STEP_SUMMARY
-          echo "- 📏 **File Size**: ${{ needs.generate-ddl.outputs.file-size }}" >> $GITHUB_STEP_SUMMARY
-          echo "- 💾 **Artifact**: database-ddl-${{ env.BRANCH_NAME }}-py${{ env.PYTHON_VERSION }}" >> $GITHUB_STEP_SUMMARY
+        if [ "${{ github.event.inputs.deploy_to_neon }}" == "true" ]; then
+          echo "🚀 Deploy su Neon: Abilitato"
         else
-          echo "- ❌ **Status**: Failed" >> $GITHUB_STEP_SUMMARY
+          echo "🚀 Deploy su Neon: Disabilitato"
         fi
-        echo "" >> $GITHUB_STEP_SUMMARY
         
-        echo "## 🚀 Neon Deployment" >> $GITHUB_STEP_SUMMARY
-        if [ "${{ env.DEPLOY_ENABLED }}" == "true" ]; then
-          if [ "${{ needs.deploy-to-neon.result }}" == "success" ]; then
-            echo "- ✅ **Status**: Success" >> $GITHUB_STEP_SUMMARY
-            echo "- 🎯 **Target**: PostgreSQL Neon" >> $GITHUB_STEP_SUMMARY
-            echo "- 🗄️ **Database**: ${{ secrets.PGDATABASE }}" >> $GITHUB_STEP_SUMMARY
-          elif [ "${{ needs.deploy-to-neon.result }}" == "failure" ]; then
-            echo "- ❌ **Status**: Failed" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "- ⏩ **Status**: Skipped (DDL generation failed)" >> $GITHUB_STEP_SUMMARY
-          fi
+        # Statistiche del file
+        if [ -f "sql/ddl/financial_tracker_ddl.sql" ]; then
+          echo ""
+          echo "📊 Statistiche file generato:"
+          echo "   - Righe: $(wc -l < sql/ddl/financial_tracker_ddl.sql)"
+          echo "   - Caratteri: $(wc -c < sql/ddl/financial_tracker_ddl.sql)"
+          echo "   - Dimensione: $(du -h sql/ddl/financial_tracker_ddl.sql | cut -f1)"
+        fi
+    
+    # Opzionale: Commit automatico del file generato
+    - name: Commit generated SQL (optional)
+      if: github.event.inputs.branch == 'main' || github.event.inputs.branch == 'develop'
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        
+        if [ -n "$(git status --porcelain sql/ddl/)" ]; then
+          git add sql/ddl/financial_tracker_ddl.sql
+          git commit -m "🤖 Auto-generated database DDL from financialTracker.xlsx
+          
+          - Branch: ${{ github.event.inputs.branch }}
+          - Python: ${{ github.event.inputs.python_version }}
+          - Generated: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+          
+          git push
+          echo "✅ File committato e pushato automaticamente"
         else
-          echo "- ⏩ **Status**: Disabled" >> $GITHUB_STEP_SUMMARY
+          echo "ℹ️ Nessuna modifica al file SQL da committare"
         fi
-        echo "" >> $GITHUB_STEP_SUMMARY
-        
-        echo "## 🎯 Next Steps" >> $GITHUB_STEP_SUMMARY
-        echo "1. Download the generated DDL from the **Artifacts** section" >> $GITHUB_STEP_SUMMARY
-        echo "2. Review the SQL structure before production deployment" >> $GITHUB_STEP_SUMMARY
-        echo "3. Test the schema in a development environment" >> $GITHUB_STEP_SUMMARY
-        echo "4. Update your application connection strings if needed" >> $GITHUB_STEP_SUMMARY
