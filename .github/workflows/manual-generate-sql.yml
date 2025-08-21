@@ -104,7 +104,6 @@ jobs:
         PGUSER: ${{ secrets.PGUSER }}
         PGPASSWORD: ${{ secrets.PGPASSWORD }}
         PGSSLMODE: ${{ secrets.PGSSLMODE }}
-        PGCHANNELBINDING: ${{ secrets.PGCHANNELBINDING }}
       run: |
         echo "🚀 Inizio deploy su PostgreSQL Neon..."
         
@@ -120,8 +119,7 @@ jobs:
                 database=os.environ['PGDATABASE'],
                 user=os.environ['PGUSER'],
                 password=os.environ['PGPASSWORD'],
-                sslmode=os.environ['PGSSLMODE'],
-                options=f\"-c gssencmode=disable -c channel_binding={os.environ['PGCHANNELBINDING']}\"
+                sslmode=os.environ['PGSSLMODE']
             )
             print('✅ Connessione al database riuscita')
             
@@ -173,6 +171,12 @@ jobs:
         echo "🐍 Python versione: ${{ github.event.inputs.python_version }}"
         echo "📝 File generato: sql/ddl/financial_tracker_ddl.sql"
         echo "💾 Artifact disponibile per il download per 30 giorni"
+        
+        if [ "${{ github.event.inputs.deploy_to_neon }}" == "true" ]; then
+          echo "🚀 Deploy su Neon: Abilitato"
+        else
+          echo "🚀 Deploy su Neon: Disabilitato"
+        fi
         
         # Statistiche del file
         if [ -f "sql/ddl/financial_tracker_ddl.sql" ]; then
