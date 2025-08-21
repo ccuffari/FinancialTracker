@@ -1,0 +1,3 @@
+schema: analytics
+monetary_type: "NUMERIC(18,2)"
+table_name_prefix: "dev_"
