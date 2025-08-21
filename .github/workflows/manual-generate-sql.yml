@@ -24,12 +24,15 @@ on:
 jobs:
   generate-ddl:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Permesso per scrivere nel repository
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
         ref: ${{ github.event.inputs.branch }}
+        token: ${{ secrets.GITHUB_TOKEN }}  # Usa il token per i permessi
     
     - name: Set up Python ${{ github.event.inputs.python_version }}
       uses: actions/setup-python@v5
