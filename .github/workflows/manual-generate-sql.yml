@@ -1,6 +1,5 @@
 name: Manual - Generate SQL from Excel
 
-# solo manual trigger (azione eseguita dall'utente)
 on:
   workflow_dispatch:
     inputs:
@@ -30,7 +29,7 @@ on:
         default: '3.10'
 
 permissions:
-  contents: write  # necessario solo se si vogliono fare commit/push dal workflow
+  contents: write
 
 jobs:
   generate:
@@ -50,24 +49,17 @@ jobs:
 
       - name: Install dependencies (if requirements.txt present)
         run: |
+          python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then
-            python -m pip install --upgrade pip
             pip install -r requirements.txt
           else
-            python -m pip install --upgrade pip
             pip install openpyxl pandas python-dateutil pyyaml typer
           fi
 
       - name: Run DB structure generator
-        env:
-          # lasciamo disponibili le variabili d'ambiente per eventuali credenziali
-          # DB_USER: ${{ secrets.DB_USER }}
-          # DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-          # ... (aggiungi se ti serve)
         run: |
           echo "Using excel: ${{ github.event.inputs.excel_path }}"
           echo "Output dir: ${{ github.event.inputs.out_dir }}"
-          # esegui il module CLI come pacchetto (richiede __init__.py nella cartella)
           python -m models.python.db_structure_generator.cli \
             --excel_file "${{ github.event.inputs.excel_path }}" \
             --out_dir "${{ github.event.inputs.out_dir }}" \
