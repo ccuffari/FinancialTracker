@@ -32,12 +32,12 @@ jobs:
         ref: ${{ github.event.inputs.branch }}
     
     - name: Set up Python ${{ github.event.inputs.python_version }}
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: ${{ github.event.inputs.python_version }}
     
     - name: Cache pip dependencies
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ~/.cache/pip
         key: ${{ runner.os }}-pip-${{ hashFiles('models/python/db_structure_generator/requirements.txt') }}
@@ -80,7 +80,7 @@ jobs:
         head -20 sql/ddl/financial_tracker_ddl.sql
     
     - name: Upload SQL artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: database-ddl-${{ github.event.inputs.branch }}-py${{ github.event.inputs.python_version }}
         path: sql/ddl/financial_tracker_ddl.sql
