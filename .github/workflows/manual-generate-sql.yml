@@ -61,7 +61,7 @@ jobs:
           echo "Using excel: ${{ github.event.inputs.excel_path }}"
           echo "Output dir: ${{ github.event.inputs.out_dir }}"
           python -m models.python.db_structure_generator.cli \
-            --excel_file "${{ github.event.inputs.excel_path }}" \
+            --excel-file "${{ github.event.inputs.excel_path }}" \
             --out_dir "${{ github.event.inputs.out_dir }}" \
             --config "${{ github.event.inputs.config_path }}"
 
