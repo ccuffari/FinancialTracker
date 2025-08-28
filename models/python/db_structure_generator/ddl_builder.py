@@ -33,11 +33,10 @@ def build_create_table(schema: str, table: str, df_columns):
     """
     Build CREATE TABLE SQL for schema.table given df_columns (list of column names).
     Column typing rules:
-     - columns inferred as 'INTEGER' => INTEGER
-     - columns inferred as 'DATE' (including 'September-25' style) => INTEGER (FK to dates.dates(date_id)), 
-       except for dates.dates itself
+     - INTEGER => INTEGER
+     - DATE => handled with FK to dates.dates
+     - STRING => VARCHAR(50)
      - else => DECIMAL(18,4)
-    Returns a list of psycopg2.sql.SQL statements (CREATE TABLE and optional ALTER TABLE ... ADD CONSTRAINT).
     """
     schema_s = sanitize_identifier(schema)
     table_s = sanitize_identifier(table)
@@ -56,7 +55,6 @@ def build_create_table(schema: str, table: str, df_columns):
                 col_defs.append(sql.SQL("{} INTEGER").format(sql.Identifier(col_safe)))
 
         elif col_type == "DATE":
-            # Store as INTEGER referencing dates.dates(date_id), except when we are inside dates.dates itself
             if schema_s == "dates" and table_s == "dates":
                 col_defs.append(sql.SQL("{} DATE").format(sql.Identifier(col_safe)))
             else:
@@ -72,8 +70,11 @@ def build_create_table(schema: str, table: str, df_columns):
                 )
                 fk_defs.append(fk_stmt)
 
+        elif col_type == "STRING":
+            # aumenta la dimensione a 50 caratteri
+            col_defs.append(sql.SQL("{} VARCHAR(50)").format(sql.Identifier(col_safe)))
+
         else:
-            # fallback: DECIMAL
             col_defs.append(sql.SQL("{} DECIMAL(18,4)").format(sql.Identifier(col_safe)))
 
     create_tbl = sql.SQL("CREATE TABLE IF NOT EXISTS {}.{} ( {} );").format(
@@ -82,5 +83,6 @@ def build_create_table(schema: str, table: str, df_columns):
         sql.SQL(", ").join(col_defs) if col_defs else sql.SQL("")
     )
 
-    statements = [create_tbl] + fk_defs
+    return [create_tbl] + fk_defs
     return statements
+
