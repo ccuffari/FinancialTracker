@@ -27,10 +27,6 @@ def sanitize_identifier(name: str) -> str:
 def infer_column_type(col_name: str, sample_values=None) -> str:
     """
     Infer column type from header name and sample values.
-    - if header equals or contains 'id' -> INTEGER
-    - if header contains 'date' -> DATE (we map to dates.dates via FK)
-    - else -> DECIMAL
-    Returns one of: 'INTEGER', 'DATE', 'DECIMAL'
     """
     name = col_name.lower()
     if name == "id" or name.endswith("_id") or name == "identifier":
@@ -39,8 +35,26 @@ def infer_column_type(col_name: str, sample_values=None) -> str:
         return "INTEGER"
     if "date" in name:
         return "DATE"
-    # fallback: check sample values for decimals
-    return "DECIMAL"
+    
+    # fallback: controlla se i valori sembrano numerici
+    if sample_values:
+        from decimal import Decimal
+        numeric_count = 0
+        total = 0
+        for v in sample_values:
+            total += 1
+            try:
+                Decimal(str(v))
+                numeric_count += 1
+            except Exception:
+                pass
+        # se la maggior parte sono numerici → DECIMAL
+        if total > 0 and numeric_count / total > 0.7:
+            return "DECIMAL"
+    
+    # altrimenti → STRING
+    return "STRING"
+
 
 def parse_date_mm_yyyy(value):
     """
@@ -104,3 +118,4 @@ def normalize_decimal(value):
     except Exception:
         logger.debug("Could not parse decimal from %r", value)
         return None
+
