@@ -25,6 +25,11 @@ on:
         required: true
         default: false
         type: boolean
+      populate_data:
+        description: 'Popola tabelle con dati Excel'
+        required: true
+        default: true
+        type: boolean
 
 jobs:
   generate-ddl:
@@ -148,11 +153,161 @@ jobs:
                     print(f'   - {schema}.{table}')
             
             conn.close()
-            print('🎉 Deploy completato con successo!')
+            print('🎉 DDL Deploy completato con successo!')
             
         except Exception as e:
-            print(f'❌ Errore durante il deploy: {str(e)}')
+            print(f'❌ Errore durante il DDL deploy: {str(e)}')
             sys.exit(1)
+        "
+    
+    # NUOVO: Popola tabelle con dati Excel
+    - name: Populate tables with Excel data
+      if: github.event.inputs.deploy_to_neon == 'true' && github.event.inputs.populate_data == 'true'
+      env:
+        PGHOST: ${{ secrets.PGHOST }}
+        PGDATABASE: ${{ secrets.PGDATABASE }}
+        PGUSER: ${{ secrets.PGUSER }}
+        PGPASSWORD: ${{ secrets.PGPASSWORD }}
+        PGSSLMODE: ${{ secrets.PGSSLMODE }}
+      run: |
+        echo "📊 Inizio popolamento tabelle con dati Excel..."
+        
+        cd models/python/db_structure_generator
+        
+        # Crea un script ETL dedicato che usa le variabili d'ambiente per la connessione Neon
+        python -c "
+        import os
+        import sys
+        import logging
+        from config import EXCEL_FILE
+        from extractor import extract_sheets
+        from etl import load_dataframe_to_table
+        import psycopg2
+        
+        # Setup logging
+        logging.basicConfig(level=logging.INFO)
+        logger = logging.getLogger('etl_neon')
+        
+        try:
+            # Connessione al database Neon usando variabili d'ambiente
+            conn = psycopg2.connect(
+                host=os.environ['PGHOST'],
+                database=os.environ['PGDATABASE'],
+                user=os.environ['PGUSER'],
+                password=os.environ['PGPASSWORD'],
+                sslmode=os.environ['PGSSLMODE']
+            )
+            print('✅ Connessione database ETL riuscita')
+            
+            # Estrai dati Excel
+            print('📖 Lettura file Excel per ETL...')
+            mapping = extract_sheets(EXCEL_FILE)
+            
+            # Gestisci tabella dates
+            dates_df = None
+            dates_schema = 'dates'
+            dates_table = 'dates'
+            dates_pk_col = 'date_id'
+            dates_date_col = None
+            
+            if (dates_schema, dates_table) in mapping:
+                dates_df = mapping.pop((dates_schema, dates_table))
+                # Rileva colonne come nel main.py
+                for c in dates_df.columns:
+                    if c.lower() == 'id' or c.lower().endswith('_id'):
+                        dates_pk_col = c
+                        break
+                for c in dates_df.columns:
+                    if 'date' in c.lower():
+                        dates_date_col = c
+                        break
+            
+            # Modifica temporaneamente la configurazione del database in etl.py
+            # (questo è un workaround - idealmente dovresti passare la connessione)
+            import etl
+            
+            # Backup configurazione originale
+            original_config = {}
+            if hasattr(etl, 'get_connection'):
+                # Sovrascrivi la funzione di connessione per usare Neon
+                def get_neon_connection():
+                    return psycopg2.connect(
+                        host=os.environ['PGHOST'],
+                        database=os.environ['PGDATABASE'],
+                        user=os.environ['PGUSER'],
+                        password=os.environ['PGPASSWORD'],
+                        sslmode=os.environ['PGSSLMODE']
+                    )
+                etl.get_connection = get_neon_connection
+            
+            # Esegui ETL per ogni tabella
+            total_rows = 0
+            for (schema, table), df in mapping.items():
+                try:
+                    print(f'📊 Caricamento dati per {schema}.{table} ({len(df)} righe)...')
+                    load_dataframe_to_table(schema, table, df, dates_pk_col=dates_pk_col, dates_date_col=dates_date_col)
+                    total_rows += len(df)
+                    print(f'✅ Dati caricati per {schema}.{table}')
+                except Exception as e:
+                    print(f'❌ Errore ETL per {schema}.{table}: {str(e)}')
+                    raise
+            
+            conn.close()
+            print(f'🎉 ETL completato! Totale righe caricate: {total_rows}')
+            
+        except Exception as e:
+            print(f'❌ Errore durante ETL: {str(e)}')
+            sys.exit(1)
+        "
+    
+    # Verifica finale dati
+    - name: Verify data population
+      if: github.event.inputs.deploy_to_neon == 'true' && github.event.inputs.populate_data == 'true'
+      env:
+        PGHOST: ${{ secrets.PGHOST }}
+        PGDATABASE: ${{ secrets.PGDATABASE }}
+        PGUSER: ${{ secrets.PGUSER }}
+        PGPASSWORD: ${{ secrets.PGPASSWORD }}
+        PGSSLMODE: ${{ secrets.PGSSLMODE }}
+      run: |
+        echo "🔍 Verifica popolamento dati..."
+        
+        python -c "
+        import psycopg2
+        import os
+        
+        conn = psycopg2.connect(
+            host=os.environ['PGHOST'],
+            database=os.environ['PGDATABASE'],
+            user=os.environ['PGUSER'],
+            password=os.environ['PGPASSWORD'],
+            sslmode=os.environ['PGSSLMODE']
+        )
+        
+        with conn.cursor() as cursor:
+            # Conta righe per ogni tabella
+            cursor.execute('''
+                SELECT schemaname, tablename 
+                FROM pg_tables 
+                WHERE schemaname NOT IN ('information_schema', 'pg_catalog')
+                ORDER BY schemaname, tablename;
+            ''')
+            tables = cursor.fetchall()
+            
+            total_rows = 0
+            print('📊 Righe per tabella:')
+            for schema, table in tables:
+                try:
+                    cursor.execute(f'SELECT COUNT(*) FROM {schema}.{table};')
+                    count = cursor.fetchone()[0]
+                    total_rows += count
+                    print(f'   - {schema}.{table}: {count} righe')
+                except Exception as e:
+                    print(f'   - {schema}.{table}: Errore conteggio ({str(e)})')
+            
+            print(f'📈 Totale righe nel database: {total_rows}')
+        
+        conn.close()
         "
     
     - name: Database deployment summary
@@ -163,6 +318,12 @@ jobs:
         echo "🗄️ Database: ${{ secrets.PGDATABASE }}"
         echo "👤 User: ${{ secrets.PGUSER }}"
         echo "🔒 SSL: Abilitato"
+        
+        if [ "${{ github.event.inputs.populate_data }}" == "true" ]; then
+          echo "📊 Popolamento dati: Abilitato"
+        else
+          echo "📊 Popolamento dati: Solo struttura"
+        fi
     
     - name: Display generation summary
       run: |
@@ -174,6 +335,11 @@ jobs:
         
         if [ "${{ github.event.inputs.deploy_to_neon }}" == "true" ]; then
           echo "🚀 Deploy su Neon: Abilitato"
+          if [ "${{ github.event.inputs.populate_data }}" == "true" ]; then
+            echo "📊 Popolamento dati: Completato"
+          else
+            echo "📊 Popolamento dati: Solo struttura"
+          fi
         else
           echo "🚀 Deploy su Neon: Disabilitato"
         fi
