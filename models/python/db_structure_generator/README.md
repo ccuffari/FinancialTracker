@@ -1,106 +1,69 @@
-# Database Structure Generator
+# Financial ETL
 
-Questo modulo genera automaticamente la struttura del database SQL a partire dal file Excel `financialTracker.xlsx`.
-
-## Struttura del Progetto
-
-```
-models/python/db_structure_generator/
-├── __init__.py
-├── main.py                 # Script principale
-├── excel_reader.py         # Lettura file Excel
-├── schema_analyzer.py      # Analisi schemi e tabelle
-├── sql_generator.py        # Generazione codice SQL
-├── utils.py               # Funzioni di utilità
-├── requirements.txt       # Dipendenze Python
-└── README.md             # Documentazione
-```
-
-## Funzionalità
-
-- **Lettura Excel**: Legge tutti i fogli dal file `financialTracker.xlsx`
-- **Filtro fogli**: Considera solo i fogli con formato `schema.tabella` (escluso `public.overview`)
-- **Analisi colonne**: Identifica automaticamente i tipi di dato:
-  - Colonna `date`: VARCHAR(7) per formato MM/YYYY
-  - Altre colonne: DECIMAL(15,2) per valori monetari in €
-- **Primary/Foreign Keys**: 
-  - `dates.dates.date` è PRIMARY KEY
-  - Tutte le altre tabelle hanno `date` come PK e FK verso `dates.dates`
-- **Transazione atomica**: Tutto o niente - se un elemento fallisce, rollback completo
+Questo progetto mette in piedi un piccolo ETL che:
+- legge i fogli di un file Excel (`financialTracker.xlsx`) con naming `schema.table`;
+- crea gli schemi e le tabelle corrispondenti su PostgreSQL;
+- normalizza le colonne "date" in una tabella centrale `dates.dates` e crea foreign key che puntano a `dates.dates(date_id)`;
+- carica i dati nelle tabelle target.
 
 ## Requisiti
-
-- Python 3.8+
-- pandas >= 2.0.0
-- openpyxl >= 3.1.0
-- xlrd >= 2.0.0
+- Python 3.9+
+- pacchetti (vedi `requirements.txt`): `pandas`, `openpyxl`, `psycopg2-binary`, `python-dotenv`, `python-dateutil`
+- accesso alla rete al DB PostgreSQL/Neon
 
 ## Installazione
+1. Creare un virtualenv:
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate   # su Windows: .venv\Scripts\activate
+   pip install -r requirements.txt
+Creare un file .env (o editare config.py) con le credenziali:
 
-```bash
-cd models/python/db_structure_generator
-pip install -r requirements.txt
-```
+ini
+Copy code
+PGHOST=...
+PGDATABASE=...
+PGUSER=...
+PGPASSWORD=...
+EXCEL_FILE=financialTracker.xlsx
+LOG_FILE=logs/financial_etl.log
+Come funziona
+extractor.py legge tutti i fogli e seleziona solo quelli in formato schema.table. Ignora public.overview.
 
-## Utilizzo
+ddl_builder.py costruisce le istruzioni SQL per creare schemi e tabelle:
 
-```bash
+colonne id => INTEGER PRIMARY KEY.
+
+colonne che contengono date => INTEGER con FK su dates.dates(date_id).
+
+tutte le altre => DECIMAL(18,4).
+
+main.py esegue la creazione degli schemi e delle tabelle, quindi l'ETL:
+
+le colonne data vengono parse come YYYY-MM-DD (se possibile) e inserite nella tabella dates.dates (se non presenti).
+
+durante il LOAD le date nella tabella target vengono sostituite dal corrispondente date_id.
+
+I log sono scritti in logs/financial_etl.log.
+
+Avvertenze e limiti
+Questo progetto effettua una minima trasformazione per mappare le date in date_id (necessario per le FK). Se desideri mantenere le colonne data come DATE native (senza FK) e non avere la tabella dates.dates, modifica ddl_builder.py ed etl.py.
+
+I nomi schema/table/colonna sono “sanitizzati” sostituendo caratteri non permessi con underscore.
+
+Non è pensato per carichi concorrenti o per scenari di co-authoring di Excel via OneDrive: usa un export locale del file.
+
+Fai una copia del DB / backup prima di eseguire in produzione.
+
+Esempio di esecuzione
+bash
+Copy code
 python main.py
-```
+Miglioramenti possibili
+supporto per tipi non-decimali (VARCHAR, BOOLEAN, ecc.)
 
-Il script:
-1. Legge `data/financialTracker.xlsx` (relativamente alla root del progetto)
-2. Analizza tutti i fogli con formato `schema.tabella`
-3. Genera il file SQL `sql/ddl/financial_tracker_ddl.sql`
+gestione transazionale con rollback in caso di errore
 
-## Struttura Output
+controllo più raffinato per la definizione delle chiavi primarie/indice
 
-Il file SQL generato include:
-
-1. **Header informativo** con timestamp
-2. **BEGIN transaction** per atomicità
-3. **CREATE SCHEMA** per tutti gli schemi identificati
-4. **CREATE TABLE** (prima `dates.dates`, poi le altre)
-5. **ALTER TABLE** per i vincoli Foreign Key
-6. **COMMIT transaction**
-
-## Esempio Output SQL
-
-```sql
--- =====================================
--- FINANCIAL TRACKER DATABASE DDL
--- =====================================
-
-BEGIN;
-
--- =====================================
--- CREAZIONE SCHEMI
--- =====================================
-
-CREATE SCHEMA IF NOT EXISTS dates;
-CREATE SCHEMA IF NOT EXISTS expenses;
-
--- =====================================
--- CREAZIONE TABELLE
--- =====================================
-
--- Tabella: dates.dates
-CREATE TABLE dates.dates (
-    date VARCHAR(7) NOT NULL,
-    CONSTRAINT pk_dates_dates PRIMARY KEY (date)
-);
-
--- Tabella: expenses.monthly
-CREATE TABLE expenses.monthly (
-    date VARCHAR(7) NOT NULL,
-    rent DECIMAL(15,2),
-    utilities DECIMAL(15,2),
-    CONSTRAINT pk_expenses_monthly PRIMARY KEY (date)
-);
-
--- =====================================
--- FOREIGN KEY CONSTRAINTS
--- =====================================
-
-ALTER TABLE expenses.monthly
-    ADD CONSTRAINT fk_expenses_monthly_
+supporto per upsert nelle tabelle target
