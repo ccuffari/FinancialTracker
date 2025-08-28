@@ -28,6 +28,50 @@ logging.basicConfig(
 )
 logger = logging.getLogger("financial_etl")
 
+def build_create_dates_table_from_columns(schema, table, columns, pk_col=None, date_col=None):
+    """
+    Build CREATE TABLE statement for dates table using provided columns.
+    
+    Args:
+        schema: Schema name
+        table: Table name  
+        columns: List of column names from the dataframe
+        pk_col: Primary key column name (if None, will use 'date_id')
+        date_col: Date column name (if None, will use 'date')
+    
+    Returns:
+        List of SQL statements
+    """
+    if pk_col is None:
+        pk_col = "date_id"
+    if date_col is None:
+        date_col = "date"
+    
+    # Start building the CREATE TABLE statement
+    stmt_parts = [f"CREATE TABLE IF NOT EXISTS {schema}.{table} ("]
+    
+    column_defs = []
+    
+    # Add primary key column
+    if pk_col in columns:
+        column_defs.append(f"    {pk_col} SERIAL PRIMARY KEY")
+    else:
+        # If pk_col not in original columns, add it as SERIAL
+        column_defs.append(f"    {pk_col} SERIAL PRIMARY KEY")
+    
+    # Add other columns
+    for col in columns:
+        if col != pk_col:  # Skip pk column as it's already added
+            if col == date_col or 'date' in col.lower():
+                column_defs.append(f"    {col} DATE")
+            else:
+                column_defs.append(f"    {col} TEXT")
+    
+    stmt_parts.append(",\n".join(column_defs))
+    stmt_parts.append(");")
+    
+    return ["\n".join(stmt_parts)]
+
 def main():
     logger.info("Starting financial ETL")
     # main.py — snippet (replace the part after mapping = extract_sheets(...))
