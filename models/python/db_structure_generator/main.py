@@ -16,6 +16,7 @@ from config import EXCEL_FILE, LOG_FILE
 from extractor import extract_sheets
 from ddl_builder import build_create_schema, build_create_dates_table, build_create_table
 from db import exec_statements
+import psycopg2
 from etl import load_dataframe_to_table
 from psycopg2 import sql
 
@@ -28,6 +29,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("financial_etl")
 
+def safe_exec_statements(statements):
 def build_create_dates_table_from_columns(schema, table, columns, pk_col=None, date_col=None):
     """
     Build CREATE TABLE statement for dates table using provided columns.
@@ -113,7 +115,7 @@ def main():
     statements.append(build_create_schema(dates_schema))
 
     try:
-        exec_statements(statements)
+        safe_exec_statements(statements)
     except Exception as e:
         logger.exception("Error creating schemas: %s", e)
         raise
@@ -122,9 +124,9 @@ def main():
     try:
         if dates_df is not None:
             stmts = build_create_dates_table_from_columns(dates_schema, dates_table, list(dates_df.columns), pk_col=dates_pk_col, date_col=dates_date_col)
-            exec_statements(stmts)
+            safe_exec_statements(stmts)
         else:
-            exec_statements([build_create_dates_table()])  # fallback legacy
+            safe_exec_statements([build_create_dates_table()])  # fallback legacy
     except Exception as e:
         logger.exception("Error creating dates table: %s", e)
         raise
@@ -133,7 +135,7 @@ def main():
     for (schema, table), df in mapping.items():
         try:
             stmts = build_create_table(schema, table, list(df.columns))
-            exec_statements(stmts)
+            safe_exec_statements(stmts)
             logger.info("Created/ensured table %s.%s", schema, table)
         except Exception as e:
             logger.exception("Error creating table %s.%s: %s", schema, table, e)
