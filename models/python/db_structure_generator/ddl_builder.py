@@ -1,5 +1,7 @@
 """
 DDL builder: produce SQL commands for creating schemas and tables.
+Handles special date formats like 'September-25' by mapping them to DATE
+(via the dates.dates table, which keeps normalized DATE values).
 """
 
 from psycopg2 import sql
@@ -17,6 +19,7 @@ def build_create_schema(schema_name: str):
 def build_create_dates_table():
     """
     Return SQL to create dates.dates table.
+    Central dimension for date values.
     """
     return sql.SQL("""
     CREATE SCHEMA IF NOT EXISTS dates;
@@ -31,11 +34,11 @@ def build_create_table(schema: str, table: str, df_columns):
     Build CREATE TABLE SQL for schema.table given df_columns (list of column names).
     Column typing rules:
      - columns inferred as 'INTEGER' => INTEGER
-     - columns inferred as 'DATE' => INTEGER (foreign key to dates.dates(date_id)), except for dates.dates itself
-     - else => DECIMAL
+     - columns inferred as 'DATE' (including 'September-25' style) => INTEGER (FK to dates.dates(date_id)), 
+       except for dates.dates itself
+     - else => DECIMAL(18,4)
     Returns a list of psycopg2.sql.SQL statements (CREATE TABLE and optional ALTER TABLE ... ADD CONSTRAINT).
     """
-    # sanitize names
     schema_s = sanitize_identifier(schema)
     table_s = sanitize_identifier(table)
 
@@ -45,20 +48,19 @@ def build_create_table(schema: str, table: str, df_columns):
     for col in df_columns:
         col_safe = sanitize_identifier(col)
         col_type = infer_column_type(col)
+
         if col_type == "INTEGER":
-            # assume primary key if name is "id"
             if col.lower() == "id":
                 col_defs.append(sql.SQL("{} INTEGER PRIMARY KEY").format(sql.Identifier(col_safe)))
             else:
                 col_defs.append(sql.SQL("{} INTEGER").format(sql.Identifier(col_safe)))
+
         elif col_type == "DATE":
-            # store as INTEGER referencing dates.dates(date_id), except when the target table is dates.dates itself
+            # Store as INTEGER referencing dates.dates(date_id), except when we are inside dates.dates itself
             if schema_s == "dates" and table_s == "dates":
-                # for the central dates table, keep proper types (DATE)
                 col_defs.append(sql.SQL("{} DATE").format(sql.Identifier(col_safe)))
             else:
                 col_defs.append(sql.SQL("{} INTEGER").format(sql.Identifier(col_safe)))
-                # build a safe constraint name and append a proper ALTER TABLE statement
                 fk_name = f"{table_s}_{col_safe}_dates_fk"
                 fk_stmt = sql.SQL(
                     "ALTER TABLE {}.{} ADD CONSTRAINT {} FOREIGN KEY ({}) REFERENCES dates.dates(date_id);"
@@ -69,8 +71,9 @@ def build_create_table(schema: str, table: str, df_columns):
                     sql.Identifier(col_safe)
                 )
                 fk_defs.append(fk_stmt)
+
         else:
-            # DECIMAL(18,4) to be safe
+            # fallback: DECIMAL
             col_defs.append(sql.SQL("{} DECIMAL(18,4)").format(sql.Identifier(col_safe)))
 
     create_tbl = sql.SQL("CREATE TABLE IF NOT EXISTS {}.{} ( {} );").format(
@@ -79,8 +82,5 @@ def build_create_table(schema: str, table: str, df_columns):
         sql.SQL(", ").join(col_defs) if col_defs else sql.SQL("")
     )
 
-    # combine: create table first, then alter statements for FKs
-    statements = [create_tbl]
-    for fk in fk_defs:
-        statements.append(fk)
+    statements = [create_tbl] + fk_defs
     return statements
