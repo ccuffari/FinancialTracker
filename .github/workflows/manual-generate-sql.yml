@@ -207,7 +207,7 @@ jobs:
             dates_df = None
             dates_schema = 'dates'
             dates_table = 'dates'
-            dates_pk_col = 'date_id'
+            dates_pk_col = 'id'
             dates_date_col = None
             
             if (dates_schema, dates_table) in mapping:
