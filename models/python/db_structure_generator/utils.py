@@ -34,7 +34,7 @@ def infer_column_type(col_name: str, sample_values=None) -> str:
     if "id" == name or name.lower().endswith("id"):
         return "INTEGER"
     if "date" in name:
-        return "DATE"
+        return "VARCHAR(50)"
     
     # fallback: controlla se i valori sembrano numerici
     if sample_values:
@@ -118,4 +118,5 @@ def normalize_decimal(value):
     except Exception:
         logger.debug("Could not parse decimal from %r", value)
         return None
+
 
