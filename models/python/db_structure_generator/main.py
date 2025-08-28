@@ -49,7 +49,7 @@ def safe_exec_statements(statements):
         if date_col is None:
             date_col = "date"
         
-        # Start building the CREATE TABLE statement
+        # Start building the CREATE TABLE statement with IF NOT EXISTS
         stmt_parts = [f"CREATE TABLE IF NOT EXISTS {schema}.{table} ("]
         
         column_defs = []
