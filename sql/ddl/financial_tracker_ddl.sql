@@ -28,14 +28,14 @@ CREATE SCHEMA IF NOT EXISTS wishes;
 -- Tabella: dates.dates
 CREATE TABLE dates.dates (
     id DECIMAL(15,2),
-    date VARCHAR(7) NOT NULL
+    date VARCHAR(50) NOT NULL
 ,
     CONSTRAINT pk_dates_dates PRIMARY KEY (date)
 );
 
 -- Tabella: needs.cdc
 CREATE TABLE needs.cdc (
-    date VARCHAR(7) NOT NULL,
+    date VARCHAR(50) NOT NULL,
     installment DECIMAL(15,2),
     cdc_value DECIMAL(15,2)
 ,
@@ -44,7 +44,7 @@ CREATE TABLE needs.cdc (
 
 -- Tabella: needs.connections
 CREATE TABLE needs.connections (
-    date VARCHAR(7) NOT NULL,
+    date VARCHAR(50) NOT NULL,
     sim DECIMAL(15,2),
     internet DECIMAL(15,2),
     connection_value DECIMAL(15,2)
@@ -54,7 +54,7 @@ CREATE TABLE needs.connections (
 
 -- Tabella: needs.financials
 CREATE TABLE needs.financials (
-    date VARCHAR(7) NOT NULL,
+    date VARCHAR(50) NOT NULL,
     car_financial DECIMAL(15,2),
     car_gas DECIMAL(15,2),
     telephone_financial DECIMAL(15,2),
@@ -65,7 +65,7 @@ CREATE TABLE needs.financials (
 
 -- Tabella: needs.fines
 CREATE TABLE needs.fines (
-    date VARCHAR(7) NOT NULL,
+    date VARCHAR(50) NOT NULL,
     fine DECIMAL(15,2),
     stamp DECIMAL(15,2),
     fines_value DECIMAL(15,2)
@@ -75,7 +75,7 @@ CREATE TABLE needs.fines (
 
 -- Tabella: needs.installments
 CREATE TABLE needs.installments (
-    date VARCHAR(7) NOT NULL,
+    date VARCHAR(50) NOT NULL,
     klarna DECIMAL(15,2),
     scalapay DECIMAL(15,2),
     cofidis DECIMAL(15,2),
@@ -86,7 +86,7 @@ CREATE TABLE needs.installments (
 
 -- Tabella: needs.insurances
 CREATE TABLE needs.insurances (
-    date VARCHAR(7) NOT NULL,
+    date VARCHAR(50) NOT NULL,
     car_insurance DECIMAL(15,2),
     insurance_value DECIMAL(15,2)
 ,
@@ -95,7 +95,7 @@ CREATE TABLE needs.insurances (
 
 -- Tabella: needs.loans
 CREATE TABLE needs.loans (
-    date VARCHAR(7) NOT NULL,
+    date VARCHAR(50) NOT NULL,
     silvia_loan DECIMAL(15,2),
     mom_loan DECIMAL(15,2),
     dad_loan DECIMAL(15,2),
@@ -107,7 +107,7 @@ CREATE TABLE needs.loans (
 
 -- Tabella: needs.rents
 CREATE TABLE needs.rents (
-    date VARCHAR(7) NOT NULL,
+    date VARCHAR(50) NOT NULL,
     rent_value DECIMAL(15,2)
 ,
     CONSTRAINT pk_needs_rents PRIMARY KEY (date)
@@ -115,7 +115,7 @@ CREATE TABLE needs.rents (
 
 -- Tabella: salaries.salaries
 CREATE TABLE salaries.salaries (
-    date VARCHAR(7) NOT NULL,
+    date VARCHAR(50) NOT NULL,
     ral DECIMAL(15,2),
     gross_salary DECIMAL(15,2),
     net_salary DECIMAL(15,2),
@@ -127,7 +127,7 @@ CREATE TABLE salaries.salaries (
 
 -- Tabella: savings.savings
 CREATE TABLE savings.savings (
-    date VARCHAR(7) NOT NULL,
+    date VARCHAR(50) NOT NULL,
     ral DECIMAL(15,2),
     gross_salary DECIMAL(15,2),
     net_salary DECIMAL(15,2),
@@ -139,7 +139,7 @@ CREATE TABLE savings.savings (
 
 -- Tabella: wishes.beauty
 CREATE TABLE wishes.beauty (
-    date VARCHAR(7) NOT NULL,
+    date VARCHAR(50) NOT NULL,
     hair DECIMAL(15,2),
     profume DECIMAL(15,2),
     beauty_value DECIMAL(15,2)
@@ -149,7 +149,7 @@ CREATE TABLE wishes.beauty (
 
 -- Tabella: wishes.holidays
 CREATE TABLE wishes.holidays (
-    date VARCHAR(7) NOT NULL,
+    date VARCHAR(50) NOT NULL,
     flight DECIMAL(15,2),
     home DECIMAL(15,2),
     holidays_value DECIMAL(15,2)
@@ -159,7 +159,7 @@ CREATE TABLE wishes.holidays (
 
 -- Tabella: wishes.parties
 CREATE TABLE wishes.parties (
-    date VARCHAR(7) NOT NULL,
+    date VARCHAR(50) NOT NULL,
     Monday DECIMAL(15,2),
     Tuesday DECIMAL(15,2),
     Wednesday DECIMAL(15,2),
@@ -174,7 +174,7 @@ CREATE TABLE wishes.parties (
 
 -- Tabella: wishes.subscriptions
 CREATE TABLE wishes.subscriptions (
-    date VARCHAR(7) NOT NULL,
+    date VARCHAR(50) NOT NULL,
     cigars DECIMAL(15,2),
     Prime DECIMAL(15,2),
     Netflix DECIMAL(15,2),
