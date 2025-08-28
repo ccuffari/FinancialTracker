@@ -1,64 +1,74 @@
-# models/python/db_structure_generator/main.py
+"""
+Main orchestrator script.
+
+Usage:
+    python main.py
+
+It will:
+ - read excel file
+ - build schemas and create tables
+ - run ETL to insert rows
+"""
+
+import logging
 import os
-import sys
-from pathlib import Path
+from config import EXCEL_FILE, LOG_FILE
+from extractor import extract_sheets
+from ddl_builder import build_create_schema, build_create_dates_table, build_create_table
+from db import exec_statements
+from etl import load_dataframe_to_table
+from psycopg2 import sql
 
-# Aggiungi il percorso dei moduli
-sys.path.append(str(Path(__file__).parent))
-
-from excel_reader import ExcelReader
-from schema_analyzer import SchemaAnalyzer
-from sql_generator import SQLGenerator
-from utils import setup_logging, ensure_output_directory
+# logging setup
+os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+logging.basicConfig(
+    filename=LOG_FILE,
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s [%(name)s] %(message)s'
+)
+logger = logging.getLogger("financial_etl")
 
 def main():
-    """
-    Funzione principale per generare la struttura del database
-    """
-    # Setup logging
-    logger = setup_logging()
-    logger.info("Avvio generazione struttura database")
-    
+    logger.info("Starting financial ETL")
+    mapping = extract_sheets(EXCEL_FILE)  # {(schema,table): df}
+    # collect schemas
+    schemas = set([s for s, t in mapping.keys()])
+    # create schema statements
+    statements = []
+    for s in schemas:
+        statements.append(build_create_schema(s))
+    # create dates.dates
+    statements.append(sql.SQL("SELECT 1;"))  # placeholder (ensures list type)
+    # execute schema creation
     try:
-        # Percorsi
-        base_path = Path(__file__).parent.parent.parent.parent  # Torna alla root
-        excel_file = base_path / "data" / "financialTracker.xlsx"
-        output_dir = base_path / "sql" / "ddl"
-        
-        # Verifica esistenza file Excel
-        if not excel_file.exists():
-            raise FileNotFoundError(f"File Excel non trovato: {excel_file}")
-        
-        # Crea directory di output se non esistente
-        ensure_output_directory(output_dir)
-        
-        # 1. Lettura Excel
-        logger.info("Lettura file Excel...")
-        excel_reader = ExcelReader(excel_file)
-        sheets_data = excel_reader.read_all_sheets()
-        
-        # 2. Analisi schemi
-        logger.info("Analisi schemi e tabelle...")
-        analyzer = SchemaAnalyzer()
-        schema_structure = analyzer.analyze_sheets(sheets_data)
-        
-        # 3. Generazione SQL
-        logger.info("Generazione codice SQL...")
-        sql_generator = SQLGenerator()
-        sql_content = sql_generator.generate_ddl(schema_structure)
-        
-        # 4. Salvataggio file
-        output_file = output_dir / "financial_tracker_ddl.sql"
-        with open(output_file, 'w', encoding='utf-8') as f:
-            f.write(sql_content)
-        
-        logger.info(f"DDL generato con successo: {output_file}")
-        print(f"✅ File SQL generato: {output_file}")
-        
+        exec_statements(statements)
+        # create dates table
+        exec_statements([build_create_dates_table()])
     except Exception as e:
-        logger.error(f"Errore durante la generazione: {str(e)}")
-        print(f"❌ Errore: {str(e)}")
-        sys.exit(1)
+        logger.exception("Error creating schemas/dates table: %s", e)
+        raise
+
+    # create each table DDL
+    for (schema, table), df in mapping.items():
+        try:
+            stmts = build_create_table(schema, table, list(df.columns))
+            exec_statements(stmts)
+            logger.info("Created/ensured table %s.%s", schema, table)
+        except Exception as e:
+            logger.exception("Error creating table %s.%s: %s", schema, table, e)
+            raise
+
+    # run ETL for each table
+    for (schema, table), df in mapping.items():
+        try:
+            logger.info("Loading data for %s.%s (%d rows)", schema, table, len(df))
+            load_dataframe_to_table(schema, table, df)
+            logger.info("Loaded data for %s.%s", schema, table)
+        except Exception as e:
+            logger.exception("ETL error for %s.%s: %s", schema, table, e)
+            raise
+
+    logger.info("ETL finished successfully")
 
 if __name__ == "__main__":
     main()

@@ -1,113 +1,106 @@
-# models/python/db_structure_generator/utils.py
+"""
+Utility helpers: sanitization, inference, parsing.
+"""
+
+import re
+from datetime import datetime
+from decimal import Decimal
 import logging
-import os
-from pathlib import Path
-from typing import Optional
 
-def setup_logging(log_level: str = 'INFO') -> logging.Logger:
-    """
-    Configura il sistema di logging
-    
-    Args:
-        log_level: Livello di logging (DEBUG, INFO, WARNING, ERROR)
-        
-    Returns:
-        Logger configurato
-    """
-    # Configura il formato del log
-    log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    
-    # Configura il logging
-    logging.basicConfig(
-        level=getattr(logging, log_level.upper()),
-        format=log_format,
-        handlers=[
-            logging.StreamHandler(),  # Output su console
-        ]
-    )
-    
-    return logging.getLogger('db_structure_generator')
+logger = logging.getLogger(__name__)
 
-def ensure_output_directory(output_dir: Path) -> None:
-    """
-    Assicura che la directory di output esista
-    
-    Args:
-        output_dir: Percorso della directory di output
-    """
-    output_dir.mkdir(parents=True, exist_ok=True)
+NAME_SAFE_RE = re.compile(r'^[A-Za-z0-9_]+$')
 
-def validate_excel_file(file_path: Path) -> bool:
+def sanitize_identifier(name: str) -> str:
     """
-    Valida che il file Excel esista e sia accessibile
-    
-    Args:
-        file_path: Percorso del file Excel
-        
-    Returns:
-        True se il file è valido
+    Return a sanitized DB identifier (letters, digits, underscore).
+    Non matching characters are replaced by underscore.
     """
-    if not file_path.exists():
-        return False
-    
-    if not file_path.is_file():
-        return False
-    
-    if file_path.suffix.lower() not in ['.xlsx', '.xls']:
-        return False
-    
-    return True
+    if not name:
+        return name
+    cleaned = re.sub(r'[^A-Za-z0-9_]', '_', name)
+    # avoid starting with digit
+    if re.match(r'^[0-9]', cleaned):
+        cleaned = "_" + cleaned
+    return cleaned
 
-def clean_identifier(identifier: str) -> str:
+def infer_column_type(col_name: str, sample_values=None) -> str:
     """
-    Pulisce un identificatore per renderlo valido per SQL
-    
-    Args:
-        identifier: Identificatore da pulire
-        
-    Returns:
-        Identificatore pulito
+    Infer column type from header name and sample values.
+    - if header equals or contains 'id' -> INTEGER
+    - if header contains 'date' -> DATE (we map to dates.dates via FK)
+    - else -> DECIMAL
+    Returns one of: 'INTEGER', 'DATE', 'DECIMAL'
     """
-    # Rimuovi spazi iniziali e finali
-    identifier = identifier.strip()
-    
-    # Sostituisci spazi con underscore
-    identifier = identifier.replace(' ', '_')
-    
-    # Rimuovi caratteri non validi (mantieni solo lettere, numeri, underscore)
-    import re
-    identifier = re.sub(r'[^a-zA-Z0-9_]', '', identifier)
-    
-    # Assicurati che inizi con una lettera o underscore
-    if identifier and not identifier[0].isalpha() and identifier[0] != '_':
-        identifier = f"_{identifier}"
-    
-    return identifier
+    name = col_name.lower()
+    if name == "id" or name.endswith("_id") or name == "identifier":
+        return "INTEGER"
+    if "id" == name or name.lower().endswith("id"):
+        return "INTEGER"
+    if "date" in name:
+        return "DATE"
+    # fallback: check sample values for decimals
+    return "DECIMAL"
 
-def format_file_size(size_bytes: int) -> str:
+def parse_date_mm_yyyy(value):
     """
-    Formatta la dimensione di un file in formato leggibile
-    
-    Args:
-        size_bytes: Dimensione in bytes
-        
-    Returns:
-        Dimensione formattata
+    Parse date strings in formats like "MM/YYYY" or "M/YYYY" or "MM-YYYY" and return a datetime.date.
+    Returns None if not parsable.
     """
-    for unit in ['B', 'KB', 'MB', 'GB']:
-        if size_bytes < 1024:
-            return f"{size_bytes:.1f} {unit}"
-        size_bytes /= 1024
-    return f"{size_bytes:.1f} TB"
+    if value is None:
+        return None
+    if isinstance(value, (datetime, )):
+        return value.date()
+    s = str(value).strip()
+    if s == "" or s.lower() in ("nan", "none"):
+        return None
+    # Accept formats: MM/YYYY, M/YYYY, MM-YYYY, YYYY-MM, YYYY/MM, etc.
+    # try common patterns
+    try:
+        # try parsing directly with dateutil via many formats
+        from dateutil import parser
+        dt = parser.parse(s, dayfirst=False, fuzzy=True, default=datetime(1900,1,1))
+        return dt.date()
+    except Exception:
+        # fallback manual MM/YYYY
+        m = re.match(r'^\s*(\d{1,2})\D+(\d{4})\s*$', s)
+        if m:
+            mm = int(m.group(1))
+            yyyy = int(m.group(2))
+            try:
+                return datetime(yyyy, mm, 1).date()
+            except Exception:
+                return None
+    return None
 
-def get_project_root() -> Path:
+def normalize_decimal(value):
     """
-    Ottiene il percorso root del progetto
-    
-    Returns:
-        Percorso root del progetto
+    Normalize numeric strings like '12.345,67 €' or '12345.67' to Decimal('12345.67').
+    If value already numeric return Decimal.
+    Returns None if empty or not parseable.
     """
-    # Dalla posizione corrente (models/python/db_structure_generator)
-    # torna indietro di 3 livelli per raggiungere la root
-    current_file = Path(__file__)
-    return current_file.parent.parent.parent.parent
+    if value is None:
+        return None
+    if isinstance(value, (int, float, Decimal)):
+        try:
+            return Decimal(str(value))
+        except Exception:
+            return None
+    s = str(value).strip()
+    if s == "" or s.lower() in ("nan", "none"):
+        return None
+    # remove euro symbol and whitespace
+    s = s.replace('€', '').replace(' ', '')
+    # If contains comma as decimal separator and dot as thousands: "12.345,67"
+    if s.count(',') == 1 and s.count('.') > 0:
+        s = s.replace('.', '').replace(',', '.')
+    # If contains comma only: "12345,67"
+    elif s.count(',') == 1 and s.count('.') == 0:
+        s = s.replace(',', '.')
+    # remove any remaining non-digit/.- chars
+    s = re.sub(r'[^\d\.\-]', '', s)
+    try:
+        return Decimal(s)
+    except Exception:
+        logger.debug("Could not parse decimal from %r", value)
+        return None
