@@ -13,5 +13,5 @@ PGUSER = os.getenv("PGUSER", "neondb_owner")
 PGPASSWORD = os.getenv("PGPASSWORD", "npg_q2vBgXHbn1ix")
 PGPORT = int(os.getenv("PGPORT", 5432))
 
-EXCEL_FILE = os.getenv("EXCEL_FILE", "financialTracker.xlsx")
+EXCEL_FILE = os.getenv("EXCEL_FILE", "../data/financialTracker.xlsx")
 LOG_FILE = os.getenv("LOG_FILE", "logs/financial_etl.log")
