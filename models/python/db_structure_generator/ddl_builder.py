@@ -35,7 +35,7 @@ def build_create_table(schema: str, table: str, df_columns):
     Column typing rules:
      - INTEGER => INTEGER
      - DATE => handled with FK to dates.dates
-     - STRING => VARCHAR(50)
+     - STRING => VARCHAR(50) (default max length)
      - else => DECIMAL(18,4)
     """
     schema_s = sanitize_identifier(schema)
@@ -56,8 +56,10 @@ def build_create_table(schema: str, table: str, df_columns):
 
         elif col_type == "DATE":
             if schema_s == "dates" and table_s == "dates":
+                # nella tabella centrale delle date manteniamo DATE
                 col_defs.append(sql.SQL("{} DATE").format(sql.Identifier(col_safe)))
             else:
+                # altrove usiamo FK alla tabella dates
                 col_defs.append(sql.SQL("{} INTEGER").format(sql.Identifier(col_safe)))
                 fk_name = f"{table_s}_{col_safe}_dates_fk"
                 fk_stmt = sql.SQL(
@@ -71,7 +73,7 @@ def build_create_table(schema: str, table: str, df_columns):
                 fk_defs.append(fk_stmt)
 
         elif col_type == "STRING":
-            # aumenta la dimensione a 50 caratteri
+            # sempre VARCHAR(50) per default
             col_defs.append(sql.SQL("{} VARCHAR(50)").format(sql.Identifier(col_safe)))
 
         else:
@@ -83,6 +85,5 @@ def build_create_table(schema: str, table: str, df_columns):
         sql.SQL(", ").join(col_defs) if col_defs else sql.SQL("")
     )
 
+    # prima CREATE TABLE, poi le ALTER TABLE con FK
     return [create_tbl] + fk_defs
-    return statements
-
