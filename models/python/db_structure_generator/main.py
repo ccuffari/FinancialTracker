@@ -132,7 +132,7 @@ def main():
     # create each table DDL using the actual pk name of dates table for FK references
     for (schema, table), df in mapping.items():
         try:
-            stmts = build_create_table(schema, table, list(df.columns), dates_pk_col=dates_pk_col)
+            stmts = build_create_table(schema, table, list(df.columns))
             exec_statements(stmts)
             logger.info("Created/ensured table %s.%s", schema, table)
         except Exception as e:
