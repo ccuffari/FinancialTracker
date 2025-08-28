@@ -207,7 +207,7 @@ jobs:
             dates_df = None
             dates_schema = 'dates'
             dates_table = 'dates'
-            dates_pk_col = 'id'
+            dates_pk_col = 'date_id'
             dates_date_col = None
             
             if (dates_schema, dates_table) in mapping:
@@ -245,7 +245,7 @@ jobs:
             for (schema, table), df in mapping.items():
                 try:
                     print(f'📊 Caricamento dati per {schema}.{table} ({len(df)} righe)...')
-                    load_dataframe_to_table(schema, table, df, dates_pk_col=dates_pk_col, dates_date_col=dates_date_col)
+                    load_dataframe_to_table(schema, table, df)
                     total_rows += len(df)
                     print(f'✅ Dati caricati per {schema}.{table}')
                 except Exception as e:
