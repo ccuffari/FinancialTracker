@@ -31,9 +31,9 @@ def build_create_table(schema: str, table: str, df_columns):
     Build CREATE TABLE SQL for schema.table given df_columns (list of column names).
     Column typing rules:
      - columns inferred as 'INTEGER' => INTEGER
-     - columns inferred as 'DATE' => INTEGER (foreign key to dates.dates(date_id))
+     - columns inferred as 'DATE' => INTEGER (foreign key to dates.dates(date_id)), except for dates.dates itself
      - else => DECIMAL
-    Returns psycopg2.sql.SQL object combining CREATE TABLE and FK constraints.
+    Returns a list of psycopg2.sql.SQL statements (CREATE TABLE and optional ALTER TABLE ... ADD CONSTRAINT).
     """
     # sanitize names
     schema_s = sanitize_identifier(schema)
@@ -52,11 +52,23 @@ def build_create_table(schema: str, table: str, df_columns):
             else:
                 col_defs.append(sql.SQL("{} INTEGER").format(sql.Identifier(col_safe)))
         elif col_type == "DATE":
-            # store as INTEGER referencing dates.dates(date_id)
-            col_defs.append(sql.SQL("{} INTEGER").format(sql.Identifier(col_safe)))
-            fk_defs.append(sql.SQL("ALTER TABLE {}.{} ADD CONSTRAINT fk_{}_dates FOREIGN KEY ({}) REFERENCES dates.dates(date_id);")
-                           .format(sql.Identifier(schema_s), sql.Identifier(table_s),
-                                   sql.Identifier(f"{table_s}_{col_safe}_dates_fk"), sql.Identifier(col_safe)))
+            # store as INTEGER referencing dates.dates(date_id), except when the target table is dates.dates itself
+            if schema_s == "dates" and table_s == "dates":
+                # for the central dates table, keep proper types (DATE)
+                col_defs.append(sql.SQL("{} DATE").format(sql.Identifier(col_safe)))
+            else:
+                col_defs.append(sql.SQL("{} INTEGER").format(sql.Identifier(col_safe)))
+                # build a safe constraint name and append a proper ALTER TABLE statement
+                fk_name = f"{table_s}_{col_safe}_dates_fk"
+                fk_stmt = sql.SQL(
+                    "ALTER TABLE {}.{} ADD CONSTRAINT {} FOREIGN KEY ({}) REFERENCES dates.dates(date_id);"
+                ).format(
+                    sql.Identifier(schema_s),
+                    sql.Identifier(table_s),
+                    sql.Identifier(fk_name),
+                    sql.Identifier(col_safe)
+                )
+                fk_defs.append(fk_stmt)
         else:
             # DECIMAL(18,4) to be safe
             col_defs.append(sql.SQL("{} DECIMAL(18,4)").format(sql.Identifier(col_safe)))
@@ -64,12 +76,11 @@ def build_create_table(schema: str, table: str, df_columns):
     create_tbl = sql.SQL("CREATE TABLE IF NOT EXISTS {}.{} ( {} );").format(
         sql.Identifier(schema_s),
         sql.Identifier(table_s),
-        sql.SQL(", ").join(col_defs)
+        sql.SQL(", ").join(col_defs) if col_defs else sql.SQL("")
     )
 
-    # combine
+    # combine: create table first, then alter statements for FKs
     statements = [create_tbl]
-    # add FK statements (as separate statements)
     for fk in fk_defs:
         statements.append(fk)
     return statements
