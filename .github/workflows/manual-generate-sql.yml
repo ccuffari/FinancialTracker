@@ -87,7 +87,7 @@ jobs:
 
           echo "✅ Validazione completata."
 
-      - name: Quick check: Excel file present?
+      - name: Quick check Excel file present?
         run: |
           if [ ! -f "data/financialTracker.xlsx" ]; then
             echo "⚠️ File data/financialTracker.xlsx non trovato in repo. Se Data Modeling/ETL richiedono il file, il job fallirà più avanti."
@@ -216,10 +216,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install psycopg2-binary
 
-      - name: Deploy DDL to PostgreSQL Neon
+      - name: Create deploy script
         run: |
-          echo "🚀 Inizio deploy su PostgreSQL Neon..."
-          python3 << 'EOF'
+          cat > deploy_ddl.py << 'EOF'
           import psycopg2, os, sys
           try:
               conn = psycopg2.connect(
@@ -252,6 +251,11 @@ jobs:
               print('❌ Errore durante il DDL deploy:', e)
               sys.exit(1)
           EOF
+
+      - name: Deploy DDL to PostgreSQL Neon
+        run: |
+          echo "🚀 Inizio deploy su PostgreSQL Neon..."
+          python deploy_ddl.py
 
   # -------------------------------------------------------
   # 4) ETL (popolamento tabelle) - opzionale
@@ -293,11 +297,10 @@ jobs:
           pip install -r models/python/db_structure_generator/requirements.txt || true
           pip install psycopg2-binary openpyxl pandas || true
 
-      - name: Run ETL script to populate tables
+      - name: Create ETL script
         run: |
-          echo "📊 Inizio ETL (popolamento tabelle)..."
           cd models/python/db_structure_generator
-          python3 << 'EOF'
+          cat > run_etl.py << 'EOF'
           import os, sys
           try:
               # Project-specific modules (config, extractor, etl) are expected in repo
@@ -335,6 +338,12 @@ jobs:
               sys.exit(1)
           EOF
 
+      - name: Run ETL script to populate tables
+        run: |
+          echo "📊 Inizio ETL (popolamento tabelle)..."
+          cd models/python/db_structure_generator
+          python run_etl.py
+
   # -------------------------------------------------------
   # 5) Closure & summary (non dipende da job condizionali)
   # -------------------------------------------------------
@@ -361,7 +370,7 @@ jobs:
           echo " - deploy_to_neon: ${{ github.event.inputs.deploy_to_neon }}"
           echo " - populate_data: ${{ github.event.inputs.populate_data }}"
 
-      - name: Optional: Commit generated SQL back to branch (main/develop)
+      - name: Optional Commit generated SQL back to branch (main/develop)
         if: (github.event.inputs.branch == 'main' || github.event.inputs.branch == 'develop') && github.event.inputs.run_data_modeling == 'true'
         run: |
           git config --local user.email "action@github.com"
