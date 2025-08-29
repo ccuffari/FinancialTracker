@@ -47,14 +47,14 @@ on:
         type: boolean
 
 jobs:
+  # -------------------------------------------------------
+  # 1) Initialization & validation
+  # -------------------------------------------------------
   initialization:
     name: Initialization & validation
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    outputs:
-      branch: ${{ github.event.inputs.branch }}
-      python_version: ${{ github.event.inputs.python_version }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -87,10 +87,10 @@ jobs:
 
           echo "✅ Validazione completata."
 
-      - name: Verify Excel file exists (quick check)
+      - name: Quick check: Excel file present?
         run: |
           if [ ! -f "data/financialTracker.xlsx" ]; then
-            echo "⚠️ File data/financialTracker.xlsx non trovato in repo."
+            echo "⚠️ File data/financialTracker.xlsx non trovato in repo. Se Data Modeling/ETL richiedono il file, il job fallirà più avanti."
           else
             echo "✅ File Excel trovato"
             ls -la data/financialTracker.xlsx
@@ -101,6 +101,9 @@ jobs:
           mkdir -p sql/ddl
           echo "✅ Directory sql/ddl creata (o già presente)"
 
+  # -------------------------------------------------------
+  # 2) Data Modeling (genera DDL) - opzionale
+  # -------------------------------------------------------
   data_modeling:
     name: Data Modeling (generate DDL)
     runs-on: ubuntu-latest
@@ -133,7 +136,7 @@ jobs:
           pip install -r models/python/db_structure_generator/requirements.txt
           pip install psycopg2-binary
 
-      - name: Verify Excel file exists (modeling)
+      - name: Verify Excel file exists (required for modeling)
         run: |
           if [ ! -f "data/financialTracker.xlsx" ]; then
             echo "❌ File data/financialTracker.xlsx non trovato! (necessario per il Data Modeling)"
@@ -141,7 +144,7 @@ jobs:
           fi
           echo "✅ File Excel trovato"
 
-      - name: Generate database structure (run generator)
+      - name: Generate database structure
         run: |
           cd models/python/db_structure_generator
           python main.py
@@ -154,6 +157,7 @@ jobs:
           fi
           echo "✅ File SQL generato con successo"
           echo "📊 Dimensione file: $(du -h sql/ddl/financial_tracker_ddl.sql | cut -f1)"
+          echo "📄 Prime 10 righe del file:"
           head -10 sql/ddl/financial_tracker_ddl.sql
 
       - name: Upload SQL artifact
@@ -163,6 +167,9 @@ jobs:
           path: sql/ddl/financial_tracker_ddl.sql
           retention-days: 30
 
+  # -------------------------------------------------------
+  # 3) Data Provisioning (deploy schema su Neon) - opzionale
+  # -------------------------------------------------------
   data_provisioning:
     name: Data Provisioning (deploy schema to Neon)
     runs-on: ubuntu-latest
@@ -195,6 +202,7 @@ jobs:
             echo "✅ SQL file found at sql/ddl/financial_tracker_ddl.sql"
           else
             echo "❌ Nessun file SQL disponibile per il deploy."
+            echo "   - Esegui prima il Data Modeling in questa workflow (run_data_modeling=true) oppure assicurati che sql/ddl/financial_tracker_ddl.sql esista nel branch selezionato"
             exit 1
           fi
 
@@ -222,8 +230,10 @@ try:
         sslmode=os.environ.get('PGSSLMODE', 'require')
     )
     with conn.cursor() as cursor:
+        print('📖 Lettura file SQL...')
         with open('sql/ddl/financial_tracker_ddl.sql', 'r', encoding='utf-8') as f:
             sql_content = f.read()
+        print('🔄 Esecuzione DDL sul database...')
         cursor.execute(sql_content)
         conn.commit()
         cursor.execute("""
@@ -233,13 +243,19 @@ try:
             ORDER BY schemaname, tablename;
         """)
         tables = cursor.fetchall()
-        print('Tabelle create:', tables)
+        print('📊 Tabelle create (count):', len(tables))
+        for schema, table in tables:
+            print(f'   - {schema}.{table}')
     conn.close()
+    print('🎉 DDL Deploy completato con successo!')
 except Exception as e:
-    print('Errore during DDL deploy:', e)
+    print('❌ Errore durante il DDL deploy:', e)
     sys.exit(1)
 PY
 
+  # -------------------------------------------------------
+  # 4) ETL (popolamento tabelle) - opzionale
+  # -------------------------------------------------------
   etl:
     name: ETL (populate tables)
     runs-on: ubuntu-latest
@@ -284,12 +300,15 @@ PY
           python - <<'PY'
 import os, sys
 try:
+    # Project-specific modules (config, extractor, etl) are expected in repo
     from config import EXCEL_FILE
     from extractor import extract_sheets
     from etl import load_dataframe_to_table
     import psycopg2
+
     mapping = extract_sheets(EXCEL_FILE)
-    # Override connection in etl module if possible
+
+    # If etl module exposes get_connection, override with environment-based connection
     try:
         import etl as etl_module
         def neon_conn():
@@ -304,20 +323,25 @@ try:
             etl_module.get_connection = neon_conn
     except Exception:
         pass
+
     total = 0
     for (schema, table), df in mapping.items():
+        print(f'Caricamento {schema}.{table} - {len(df)} righe')
         load_dataframe_to_table(schema, table, df)
         total += len(df)
     print("ETL completato, righe caricate:", total)
 except Exception as e:
-    print("Errore ETL:", e)
+    print("❌ Errore ETL:", e)
     sys.exit(1)
 PY
 
+  # -------------------------------------------------------
+  # 5) Closure & summary (non dipende da job condizionali)
+  # -------------------------------------------------------
   closure:
     name: Closure & summary
     runs-on: ubuntu-latest
-    needs: [initialization, data_modeling, data_provisioning, etl]
+    needs: initialization
     permissions:
       contents: write
     steps:
@@ -344,7 +368,6 @@ PY
           git config --local user.name "GitHub Action"
           if [ -n "$(git status --porcelain sql/ddl/)" ]; then
             git add sql/ddl/financial_tracker_ddl.sql || true
-            # use a single-line commit message to avoid YAML/quote issues
             git commit -m "Auto-generated DDL: financial_tracker_ddl.sql [branch:${{ github.event.inputs.branch }} py:${{ github.event.inputs.python_version }}]" || true
             git push || true
             echo "✅ File committato e pushato automaticamente"
