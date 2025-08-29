@@ -5,50 +5,48 @@ on:
   workflow_dispatch:
     inputs:
       branch:
-        description: 'Branch da utilizzare'
+        description: "Branch da utilizzare"
         required: true
-        default: 'main'
+        default: "main"
         type: string
       python_version:
-        description: 'Versione Python'
+        description: "Versione Python"
         required: true
-        default: '3.10'
+        default: "3.10"
         type: choice
         options:
-          - '3.8'
-          - '3.9'
-          - '3.10'
-          - '3.11'
-          - '3.12'
+          - "3.8"
+          - "3.9"
+          - "3.10"
+          - "3.11"
+          - "3.12"
       deploy_to_neon:
-        description: 'Deploy su PostgreSQL Neon (necessario per Provisioning/ETL)'
+        description: "Deploy su PostgreSQL Neon (necessario per Provisioning/ETL)"
         required: true
         default: false
         type: boolean
       populate_data:
-        description: 'Popola tabelle con dati Excel (usato dall\'ETL)'
+        description: "Popola tabelle con dati Excel (usato dall'ETL)"
         required: true
         default: true
         type: boolean
-      # Selezioni manuali per i jobs opzionali
       run_data_modeling:
-        description: 'Esegui Data Modeling (genera SQL DDL)'
+        description: "Esegui Data Modeling (genera SQL DDL)"
         required: true
         default: true
         type: boolean
       run_data_provisioning:
-        description: 'Esegui Data Provisioning (deploy dello schema su Neon)'
+        description: "Esegui Data Provisioning (deploy dello schema su Neon)"
         required: true
         default: false
         type: boolean
       run_etl:
-        description: 'Esegui ETL (popolamento tabelle)'
+        description: "Esegui ETL (popolamento tabelle)"
         required: true
         default: false
         type: boolean
 
 jobs:
-  # 1) Inizializzazione e validazione selezioni
   initialization:
     name: Initialization & validation
     runs-on: ubuntu-latest
@@ -79,25 +77,20 @@ jobs:
 
           if [ "$RM" != "true" ] && [ "$RP" != "true" ] && [ "$RE" != "true" ]; then
             echo "❌ Errore: almeno uno tra Data Modeling, Data Provisioning o ETL deve essere selezionato."
-            echo "Seleziona almeno uno dei flag: run_data_modeling, run_data_provisioning, run_etl"
             exit 1
           fi
 
-          # Se provisioning o ETL sono richiesti, deploy_to_neon deve essere true
           if { [ "$RP" = "true" ] || [ "$RE" = "true" ]; } && [ "$DEPLOY" != "true" ]; then
-            echo "❌ Errore: Data Provisioning ed ETL richiedono 'deploy_to_neon' = true per connettersi al DB Neon."
-            echo " - Se vuoi eseguire solo il modelling (generare SQL) lascia deploy_to_neon=false."
-            echo " - Se vuoi deployare lo schema o popolare i dati imposta deploy_to_neon=true e configura i secrets PG*."
+            echo "❌ Errore: Data Provisioning ed ETL richiedono 'deploy_to_neon' = true."
             exit 1
           fi
 
           echo "✅ Validazione completata."
-      
+
       - name: Verify Excel file exists (quick check)
         run: |
           if [ ! -f "data/financialTracker.xlsx" ]; then
-            echo "⚠️ File data/financialTracker.xlsx non trovato in repo. Se stai eseguendo Data Modeling/ETL assicurati che il file sia presente."
-            # Non falliamo qui: magari il job Modeling userà un file generato altrove.
+            echo "⚠️ File data/financialTracker.xlsx non trovato in repo."
           else
             echo "✅ File Excel trovato"
             ls -la data/financialTracker.xlsx
@@ -108,7 +101,6 @@ jobs:
           mkdir -p sql/ddl
           echo "✅ Directory sql/ddl creata (o già presente)"
 
-  # 2) Data Modeling (Estrazione Schema -> genera SQL)
   data_modeling:
     name: Data Modeling (generate DDL)
     runs-on: ubuntu-latest
@@ -121,8 +113,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.branch }}
-      
-      - name: Set up Python ${{ github.event.inputs.python_version }}
+
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ github.event.inputs.python_version }}
@@ -162,7 +154,6 @@ jobs:
           fi
           echo "✅ File SQL generato con successo"
           echo "📊 Dimensione file: $(du -h sql/ddl/financial_tracker_ddl.sql | cut -f1)"
-          echo "📄 Prime 10 righe del file:"
           head -10 sql/ddl/financial_tracker_ddl.sql
 
       - name: Upload SQL artifact
@@ -172,7 +163,6 @@ jobs:
           path: sql/ddl/financial_tracker_ddl.sql
           retention-days: 30
 
-  # 3) Data Provisioning (deploy schema su DB Neon) - opzionale
   data_provisioning:
     name: Data Provisioning (deploy schema to Neon)
     runs-on: ubuntu-latest
@@ -203,14 +193,8 @@ jobs:
         run: |
           if [ -f "sql/ddl/financial_tracker_ddl.sql" ]; then
             echo "✅ SQL file found at sql/ddl/financial_tracker_ddl.sql"
-          elif [ -f "sql/ddl/financial_tracker_ddl.sql" ]; then
-            # redundant but explicit
-            echo "✅ SQL file found in repo"
           else
             echo "❌ Nessun file SQL disponibile per il deploy."
-            echo "Azioni possibili:"
-            echo " - Esegui prima il job Data Modeling in questa workflow (run_data_modeling=true)"
-            echo " - Oppure assicurati che sql/ddl/financial_tracker_ddl.sql esista nel branch selezionato"
             exit 1
           fi
 
@@ -238,13 +222,10 @@ try:
         sslmode=os.environ.get('PGSSLMODE', 'require')
     )
     with conn.cursor() as cursor:
-        print('📖 Lettura file SQL...')
         with open('sql/ddl/financial_tracker_ddl.sql', 'r', encoding='utf-8') as f:
             sql_content = f.read()
-        print('🔄 Esecuzione DDL sul database...')
         cursor.execute(sql_content)
         conn.commit()
-        print('✅ DDL eseguito con successo!')
         cursor.execute("""
             SELECT schemaname, tablename 
             FROM pg_tables 
@@ -252,17 +233,13 @@ try:
             ORDER BY schemaname, tablename;
         """)
         tables = cursor.fetchall()
-        print(f'📊 Tabelle create ({len(tables)}):')
-        for schema, table in tables:
-            print(f'   - {schema}.{table}')
+        print('Tabelle create:', tables)
     conn.close()
-    print('🎉 DDL Deploy completato con successo!')
 except Exception as e:
-    print(f'❌ Errore durante il DDL deploy: {e}')
+    print('Errore during DDL deploy:', e)
     sys.exit(1)
 PY
 
-  # 4) ETL (popolazione tabelle) - opzionale e indipendente
   etl:
     name: ETL (populate tables)
     runs-on: ubuntu-latest
@@ -307,20 +284,14 @@ PY
           python - <<'PY'
 import os, sys
 try:
-    # Questo script si aspetta che nel repo ci siano i moduli extractor/etl come nel progetto originale.
-    # Si connette al DB usando le variabili d'ambiente PG* e chiama le funzioni etl.load_dataframe_to_table come implementato nel repo.
     from config import EXCEL_FILE
     from extractor import extract_sheets
-    from etl import load_dataframe_to_table, get_connection
+    from etl import load_dataframe_to_table
     import psycopg2
-    import logging
-    logging.basicConfig(level=logging.INFO)
-
-    # Estrai dati dall'excel
     mapping = extract_sheets(EXCEL_FILE)
-
-    # Sovrascrivi la funzione di connessione per usare variabili d'ambiente (se esiste)
+    # Override connection in etl module if possible
     try:
+        import etl as etl_module
         def neon_conn():
             return psycopg2.connect(
                 host=os.environ['PGHOST'],
@@ -329,25 +300,20 @@ try:
                 password=os.environ['PGPASSWORD'],
                 sslmode=os.environ.get('PGSSLMODE', 'require')
             )
-        # Se etl.get_connection esiste, sovrascrivilo
-        import etl as etl_module
         if hasattr(etl_module, 'get_connection'):
             etl_module.get_connection = neon_conn
     except Exception:
         pass
-
     total = 0
     for (schema, table), df in mapping.items():
-        print(f"Caricamento {schema}.{table} - {len(df)} righe")
         load_dataframe_to_table(schema, table, df)
         total += len(df)
-    print(f"ETL completato, righe caricate: {total}")
+    print("ETL completato, righe caricate:", total)
 except Exception as e:
-    print("❌ Errore ETL:", e)
+    print("Errore ETL:", e)
     sys.exit(1)
 PY
 
-  # 5) Chiusura / summary / (optional commit)
   closure:
     name: Closure & summary
     runs-on: ubuntu-latest
@@ -371,30 +337,19 @@ PY
           echo " - deploy_to_neon: ${{ github.event.inputs.deploy_to_neon }}"
           echo " - populate_data: ${{ github.event.inputs.populate_data }}"
 
-          if [ -f "sql/ddl/financial_tracker_ddl.sql" ]; then
-            echo ""
-            echo "📄 File SQL presente in repo: sql/ddl/financial_tracker_ddl.sql"
-            echo "   - Righe: $(wc -l < sql/ddl/financial_tracker_ddl.sql)"
-            echo "   - Caratteri: $(wc -c < sql/ddl/financial_tracker_ddl.sql)"
-            echo "   - Dimensione: $(du -h sql/ddl/financial_tracker_ddl.sql | cut -f1)"
-          else
-            echo "ℹ️ File SQL non presente in repo (potrebbe essere stato generato come artifact nella job Data Modeling)."
-          fi
-
       - name: Optional: Commit generated SQL back to branch (main/develop)
         if: (github.event.inputs.branch == 'main' || github.event.inputs.branch == 'develop') && github.event.inputs.run_data_modeling == 'true'
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-
           if [ -n "$(git status --porcelain sql/ddl/)" ]; then
-            git add sql/ddl/financial_tracker_ddl.sql
+            git add sql/ddl/financial_tracker_ddl.sql || true
             git commit -m "🤖 Auto-generated database DDL from financialTracker.xlsx
 
 - Branch: ${{ github.event.inputs.branch }}
 - Python: ${{ github.event.inputs.python_version }}
-- Generated: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-            git push
+- Generated: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" || true
+            git push || true
             echo "✅ File committato e pushato automaticamente"
           else
             echo "ℹ️ Nessuna modifica al file SQL da committare"
