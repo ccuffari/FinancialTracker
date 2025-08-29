@@ -56,6 +56,14 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Validate prerequisites
+        run: |
+          if [ "${{ github.event.inputs.deploy_to_neon }}" != "true" ]; then
+            echo "❌ Errore: ETL richiede 'deploy_to_neon' = true per accedere al database"
+            exit 1
+          fi
+          echo "✅ Prerequisiti validati"
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -256,7 +264,7 @@ jobs:
   etl:
     name: ETL (populate tables)
     runs-on: ubuntu-latest
-    if: ${{ github.event.inputs.run_etl == 'true' && github.event.inputs.deploy_to_neon == 'true' }}
+    if: ${{ github.event.inputs.run_etl == 'true' }}
     permissions:
       contents: write
     env:
@@ -337,11 +345,13 @@ jobs:
           python run_etl.py
 
   # -------------------------------------------------------
-  # 5) Chiusura - SEMPRE
+  # 5) Chiusura - SEMPRE (dopo tutti gli altri)
   # -------------------------------------------------------
   closure:
     name: Closure & summary
     runs-on: ubuntu-latest
+    needs: [initialization, data_modeling, data_provisioning, etl]
+    if: always()
     permissions:
       contents: write
     steps:
