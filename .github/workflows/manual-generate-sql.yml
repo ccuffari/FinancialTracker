@@ -48,66 +48,11 @@ on:
 
 jobs:
   # -------------------------------------------------------
-  # 1) Initialization & validation
-  # -------------------------------------------------------
-  initialization:
-    name: Initialization & validation
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.inputs.branch }}
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Validate user selections (at least one of Modeling/Provisioning/ETL)
-        run: |
-          echo "Validating workflow inputs..."
-          RM="${{ github.event.inputs.run_data_modeling }}"
-          RP="${{ github.event.inputs.run_data_provisioning }}"
-          RE="${{ github.event.inputs.run_etl }}"
-          DEPLOY="${{ github.event.inputs.deploy_to_neon }}"
-
-          echo " - run_data_modeling: $RM"
-          echo " - run_data_provisioning: $RP"
-          echo " - run_etl: $RE"
-          echo " - deploy_to_neon: $DEPLOY"
-
-          if [ "$RM" != "true" ] && [ "$RP" != "true" ] && [ "$RE" != "true" ]; then
-            echo "❌ Errore: almeno uno tra Data Modeling, Data Provisioning o ETL deve essere selezionato."
-            exit 1
-          fi
-
-          if { [ "$RP" = "true" ] || [ "$RE" = "true" ]; } && [ "$DEPLOY" != "true" ]; then
-            echo "❌ Errore: Data Provisioning ed ETL richiedono 'deploy_to_neon' = true."
-            exit 1
-          fi
-
-          echo "✅ Validazione completata."
-
-      - name: Quick check Excel file present?
-        run: |
-          if [ ! -f "data/financialTracker.xlsx" ]; then
-            echo "⚠️ File data/financialTracker.xlsx non trovato in repo. Se Data Modeling/ETL richiedono il file, il job fallirà più avanti."
-          else
-            echo "✅ File Excel trovato"
-            ls -la data/financialTracker.xlsx
-          fi
-
-      - name: Create output directory
-        run: |
-          mkdir -p sql/ddl
-          echo "✅ Directory sql/ddl creata (o già presente)"
-
-  # -------------------------------------------------------
-  # 2) Data Modeling (genera DDL) - opzionale
+  # 1) Data Modeling (genera DDL) - indipendente
   # -------------------------------------------------------
   data_modeling:
     name: Data Modeling (generate DDL)
     runs-on: ubuntu-latest
-    needs: initialization
     if: ${{ github.event.inputs.run_data_modeling == 'true' }}
     permissions:
       contents: write
@@ -116,6 +61,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.branch }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -130,16 +76,21 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-
 
+      - name: Create output directory
+        run: |
+          mkdir -p sql/ddl
+          echo "✅ Directory sql/ddl creata"
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r models/python/db_structure_generator/requirements.txt
           pip install psycopg2-binary
 
-      - name: Verify Excel file exists (required for modeling)
+      - name: Verify Excel file exists
         run: |
           if [ ! -f "data/financialTracker.xlsx" ]; then
-            echo "❌ File data/financialTracker.xlsx non trovato! (necessario per il Data Modeling)"
+            echo "❌ File data/financialTracker.xlsx non trovato!"
             exit 1
           fi
           echo "✅ File Excel trovato"
@@ -167,13 +118,26 @@ jobs:
           path: sql/ddl/financial_tracker_ddl.sql
           retention-days: 30
 
+      - name: Auto-commit generated SQL (main/develop only)
+        if: github.event.inputs.branch == 'main' || github.event.inputs.branch == 'develop'
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          if [ -n "$(git status --porcelain sql/ddl/)" ]; then
+            git add sql/ddl/financial_tracker_ddl.sql
+            git commit -m "Auto-generated DDL: financial_tracker_ddl.sql [branch:${{ github.event.inputs.branch }} py:${{ github.event.inputs.python_version }}]"
+            git push
+            echo "✅ File committato e pushato automaticamente"
+          else
+            echo "ℹ️ Nessuna modifica al file SQL da committare"
+          fi
+
   # -------------------------------------------------------
-  # 3) Data Provisioning (deploy schema su Neon) - opzionale
+  # 2) Data Provisioning (deploy schema su Neon) - indipendente
   # -------------------------------------------------------
   data_provisioning:
     name: Data Provisioning (deploy schema to Neon)
     runs-on: ubuntu-latest
-    needs: initialization
     if: ${{ github.event.inputs.run_data_provisioning == 'true' }}
     permissions:
       contents: write
@@ -184,29 +148,20 @@ jobs:
       PGPASSWORD: ${{ secrets.PGPASSWORD }}
       PGSSLMODE: ${{ secrets.PGSSLMODE }}
     steps:
+      - name: Validate prerequisites
+        run: |
+          if [ "${{ github.event.inputs.deploy_to_neon }}" != "true" ]; then
+            echo "❌ Errore: Data Provisioning richiede 'deploy_to_neon' = true"
+            exit 1
+          fi
+          echo "✅ Validazione completata"
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.branch }}
 
-      - name: Try download SQL artifact from this run (if Data Modeling ran)
-        uses: actions/download-artifact@v4
-        with:
-          name: database-ddl-${{ github.event.inputs.branch }}-py${{ github.event.inputs.python_version }}
-          path: sql/ddl
-        continue-on-error: true
-
-      - name: Locate SQL file (artifact or repo)
-        run: |
-          if [ -f "sql/ddl/financial_tracker_ddl.sql" ]; then
-            echo "✅ SQL file found at sql/ddl/financial_tracker_ddl.sql"
-          else
-            echo "❌ Nessun file SQL disponibile per il deploy."
-            echo "   - Esegui prima il Data Modeling in questa workflow (run_data_modeling=true) oppure assicurati che sql/ddl/financial_tracker_ddl.sql esista nel branch selezionato"
-            exit 1
-          fi
-
-      - name: Set up Python (for psycopg2)
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ github.event.inputs.python_version }}
@@ -215,6 +170,16 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install psycopg2-binary
+
+      - name: Locate SQL file
+        run: |
+          if [ -f "sql/ddl/financial_tracker_ddl.sql" ]; then
+            echo "✅ SQL file found at sql/ddl/financial_tracker_ddl.sql"
+          else
+            echo "❌ File sql/ddl/financial_tracker_ddl.sql non trovato nel repository"
+            echo "   Esegui prima il Data Modeling per generare il file DDL"
+            exit 1
+          fi
 
       - name: Create deploy script
         run: |
@@ -242,7 +207,7 @@ jobs:
                       ORDER BY schemaname, tablename;
                   """)
                   tables = cursor.fetchall()
-                  print('📊 Tabelle create (count):', len(tables))
+                  print('📊 Tabelle create:', len(tables))
                   for schema, table in tables:
                       print(f'   - {schema}.{table}')
               conn.close()
@@ -258,12 +223,11 @@ jobs:
           python deploy_ddl.py
 
   # -------------------------------------------------------
-  # 4) ETL (popolamento tabelle) - opzionale
+  # 3) ETL (popolamento tabelle) - indipendente
   # -------------------------------------------------------
   etl:
     name: ETL (populate tables)
     runs-on: ubuntu-latest
-    needs: initialization
     if: ${{ github.event.inputs.run_etl == 'true' }}
     permissions:
       contents: write
@@ -274,17 +238,18 @@ jobs:
       PGPASSWORD: ${{ secrets.PGPASSWORD }}
       PGSSLMODE: ${{ secrets.PGSSLMODE }}
     steps:
+      - name: Validate prerequisites
+        run: |
+          if [ "${{ github.event.inputs.deploy_to_neon }}" != "true" ]; then
+            echo "❌ Errore: ETL richiede 'deploy_to_neon' = true"
+            exit 1
+          fi
+          echo "✅ Validazione completata"
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.branch }}
-
-      - name: Try download SQL artifact from this run (optional)
-        uses: actions/download-artifact@v4
-        with:
-          name: database-ddl-${{ github.event.inputs.branch }}-py${{ github.event.inputs.python_version }}
-          path: sql/ddl
-        continue-on-error: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -297,13 +262,20 @@ jobs:
           pip install -r models/python/db_structure_generator/requirements.txt || true
           pip install psycopg2-binary openpyxl pandas || true
 
+      - name: Verify Excel file exists
+        run: |
+          if [ ! -f "data/financialTracker.xlsx" ]; then
+            echo "❌ File data/financialTracker.xlsx non trovato!"
+            exit 1
+          fi
+          echo "✅ File Excel trovato"
+
       - name: Create ETL script
         run: |
           cd models/python/db_structure_generator
           cat > run_etl.py << 'EOF'
           import os, sys
           try:
-              # Project-specific modules (config, extractor, etl) are expected in repo
               from config import EXCEL_FILE
               from extractor import extract_sheets
               from etl import load_dataframe_to_table
@@ -311,7 +283,7 @@ jobs:
 
               mapping = extract_sheets(EXCEL_FILE)
 
-              # If etl module exposes get_connection, override with environment-based connection
+              # Override connection function if available
               try:
                   import etl as etl_module
                   def neon_conn():
@@ -332,9 +304,9 @@ jobs:
                   print(f'Caricamento {schema}.{table} - {len(df)} righe')
                   load_dataframe_to_table(schema, table, df)
                   total += len(df)
-              print("ETL completato, righe caricate:", total)
+              print(f"✅ ETL completato, righe caricate: {total}")
           except Exception as e:
-              print("❌ Errore ETL:", e)
+              print(f"❌ Errore ETL: {e}")
               sys.exit(1)
           EOF
 
@@ -343,43 +315,3 @@ jobs:
           echo "📊 Inizio ETL (popolamento tabelle)..."
           cd models/python/db_structure_generator
           python run_etl.py
-
-  # -------------------------------------------------------
-  # 5) Closure & summary (non dipende da job condizionali)
-  # -------------------------------------------------------
-  closure:
-    name: Closure & summary
-    runs-on: ubuntu-latest
-    needs: initialization
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.inputs.branch }}
-
-      - name: Display run summary
-        run: |
-          echo "🎉 Workflow summary"
-          echo " - Branch: ${{ github.event.inputs.branch }}"
-          echo " - Python: ${{ github.event.inputs.python_version }}"
-          echo " - run_data_modeling: ${{ github.event.inputs.run_data_modeling }}"
-          echo " - run_data_provisioning: ${{ github.event.inputs.run_data_provisioning }}"
-          echo " - run_etl: ${{ github.event.inputs.run_etl }}"
-          echo " - deploy_to_neon: ${{ github.event.inputs.deploy_to_neon }}"
-          echo " - populate_data: ${{ github.event.inputs.populate_data }}"
-
-      - name: Optional Commit generated SQL back to branch (main/develop)
-        if: (github.event.inputs.branch == 'main' || github.event.inputs.branch == 'develop') && github.event.inputs.run_data_modeling == 'true'
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          if [ -n "$(git status --porcelain sql/ddl/)" ]; then
-            git add sql/ddl/financial_tracker_ddl.sql || true
-            git commit -m "Auto-generated DDL: financial_tracker_ddl.sql [branch:${{ github.event.inputs.branch }} py:${{ github.event.inputs.python_version }}]" || true
-            git push || true
-            echo "✅ File committato e pushato automaticamente"
-          else
-            echo "ℹ️ Nessuna modifica al file SQL da committare"
-          fi
