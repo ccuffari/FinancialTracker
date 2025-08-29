@@ -219,39 +219,39 @@ jobs:
       - name: Deploy DDL to PostgreSQL Neon
         run: |
           echo "🚀 Inizio deploy su PostgreSQL Neon..."
-          python - <<'PY'
-import psycopg2, os, sys
-try:
-    conn = psycopg2.connect(
-        host=os.environ['PGHOST'],
-        database=os.environ['PGDATABASE'],
-        user=os.environ['PGUSER'],
-        password=os.environ['PGPASSWORD'],
-        sslmode=os.environ.get('PGSSLMODE', 'require')
-    )
-    with conn.cursor() as cursor:
-        print('📖 Lettura file SQL...')
-        with open('sql/ddl/financial_tracker_ddl.sql', 'r', encoding='utf-8') as f:
-            sql_content = f.read()
-        print('🔄 Esecuzione DDL sul database...')
-        cursor.execute(sql_content)
-        conn.commit()
-        cursor.execute("""
-            SELECT schemaname, tablename 
-            FROM pg_tables 
-            WHERE schemaname NOT IN ('information_schema', 'pg_catalog')
-            ORDER BY schemaname, tablename;
-        """)
-        tables = cursor.fetchall()
-        print('📊 Tabelle create (count):', len(tables))
-        for schema, table in tables:
-            print(f'   - {schema}.{table}')
-    conn.close()
-    print('🎉 DDL Deploy completato con successo!')
-except Exception as e:
-    print('❌ Errore durante il DDL deploy:', e)
-    sys.exit(1)
-PY
+          python3 << 'EOF'
+          import psycopg2, os, sys
+          try:
+              conn = psycopg2.connect(
+                  host=os.environ['PGHOST'],
+                  database=os.environ['PGDATABASE'],
+                  user=os.environ['PGUSER'],
+                  password=os.environ['PGPASSWORD'],
+                  sslmode=os.environ.get('PGSSLMODE', 'require')
+              )
+              with conn.cursor() as cursor:
+                  print('📖 Lettura file SQL...')
+                  with open('sql/ddl/financial_tracker_ddl.sql', 'r', encoding='utf-8') as f:
+                      sql_content = f.read()
+                  print('🔄 Esecuzione DDL sul database...')
+                  cursor.execute(sql_content)
+                  conn.commit()
+                  cursor.execute("""
+                      SELECT schemaname, tablename 
+                      FROM pg_tables 
+                      WHERE schemaname NOT IN ('information_schema', 'pg_catalog')
+                      ORDER BY schemaname, tablename;
+                  """)
+                  tables = cursor.fetchall()
+                  print('📊 Tabelle create (count):', len(tables))
+                  for schema, table in tables:
+                      print(f'   - {schema}.{table}')
+              conn.close()
+              print('🎉 DDL Deploy completato con successo!')
+          except Exception as e:
+              print('❌ Errore durante il DDL deploy:', e)
+              sys.exit(1)
+          EOF
 
   # -------------------------------------------------------
   # 4) ETL (popolamento tabelle) - opzionale
@@ -297,43 +297,43 @@ PY
         run: |
           echo "📊 Inizio ETL (popolamento tabelle)..."
           cd models/python/db_structure_generator
-          python - <<'PY'
-import os, sys
-try:
-    # Project-specific modules (config, extractor, etl) are expected in repo
-    from config import EXCEL_FILE
-    from extractor import extract_sheets
-    from etl import load_dataframe_to_table
-    import psycopg2
+          python3 << 'EOF'
+          import os, sys
+          try:
+              # Project-specific modules (config, extractor, etl) are expected in repo
+              from config import EXCEL_FILE
+              from extractor import extract_sheets
+              from etl import load_dataframe_to_table
+              import psycopg2
 
-    mapping = extract_sheets(EXCEL_FILE)
+              mapping = extract_sheets(EXCEL_FILE)
 
-    # If etl module exposes get_connection, override with environment-based connection
-    try:
-        import etl as etl_module
-        def neon_conn():
-            return psycopg2.connect(
-                host=os.environ['PGHOST'],
-                database=os.environ['PGDATABASE'],
-                user=os.environ['PGUSER'],
-                password=os.environ['PGPASSWORD'],
-                sslmode=os.environ.get('PGSSLMODE', 'require')
-            )
-        if hasattr(etl_module, 'get_connection'):
-            etl_module.get_connection = neon_conn
-    except Exception:
-        pass
+              # If etl module exposes get_connection, override with environment-based connection
+              try:
+                  import etl as etl_module
+                  def neon_conn():
+                      return psycopg2.connect(
+                          host=os.environ['PGHOST'],
+                          database=os.environ['PGDATABASE'],
+                          user=os.environ['PGUSER'],
+                          password=os.environ['PGPASSWORD'],
+                          sslmode=os.environ.get('PGSSLMODE', 'require')
+                      )
+                  if hasattr(etl_module, 'get_connection'):
+                      etl_module.get_connection = neon_conn
+              except Exception:
+                  pass
 
-    total = 0
-    for (schema, table), df in mapping.items():
-        print(f'Caricamento {schema}.{table} - {len(df)} righe')
-        load_dataframe_to_table(schema, table, df)
-        total += len(df)
-    print("ETL completato, righe caricate:", total)
-except Exception as e:
-    print("❌ Errore ETL:", e)
-    sys.exit(1)
-PY
+              total = 0
+              for (schema, table), df in mapping.items():
+                  print(f'Caricamento {schema}.{table} - {len(df)} righe')
+                  load_dataframe_to_table(schema, table, df)
+                  total += len(df)
+              print("ETL completato, righe caricate:", total)
+          except Exception as e:
+              print("❌ Errore ETL:", e)
+              sys.exit(1)
+          EOF
 
   # -------------------------------------------------------
   # 5) Closure & summary (non dipende da job condizionali)
