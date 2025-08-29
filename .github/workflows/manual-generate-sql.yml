@@ -344,11 +344,8 @@ PY
           git config --local user.name "GitHub Action"
           if [ -n "$(git status --porcelain sql/ddl/)" ]; then
             git add sql/ddl/financial_tracker_ddl.sql || true
-            git commit -m "🤖 Auto-generated database DDL from financialTracker.xlsx
-
-- Branch: ${{ github.event.inputs.branch }}
-- Python: ${{ github.event.inputs.python_version }}
-- Generated: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" || true
+            # use a single-line commit message to avoid YAML/quote issues
+            git commit -m "Auto-generated DDL: financial_tracker_ddl.sql [branch:${{ github.event.inputs.branch }} py:${{ github.event.inputs.python_version }}]" || true
             git push || true
             echo "✅ File committato e pushato automaticamente"
           else
