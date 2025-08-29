@@ -21,355 +21,381 @@ on:
           - '3.11'
           - '3.12'
       deploy_to_neon:
-        description: 'Deploy su PostgreSQL Neon'
+        description: 'Deploy su PostgreSQL Neon (necessario per Provisioning/ETL)'
         required: true
         default: false
         type: boolean
       populate_data:
-        description: 'Popola tabelle con dati Excel'
+        description: 'Popola tabelle con dati Excel (usato dall\'ETL)'
         required: true
         default: true
         type: boolean
+      # Selezioni manuali per i jobs opzionali
+      run_data_modeling:
+        description: 'Esegui Data Modeling (genera SQL DDL)'
+        required: true
+        default: true
+        type: boolean
+      run_data_provisioning:
+        description: 'Esegui Data Provisioning (deploy dello schema su Neon)'
+        required: true
+        default: false
+        type: boolean
+      run_etl:
+        description: 'Esegui ETL (popolamento tabelle)'
+        required: true
+        default: false
+        type: boolean
 
 jobs:
-  generate-ddl:
+  # 1) Inizializzazione e validazione selezioni
+  initialization:
+    name: Initialization & validation
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # Permesso per scrivere nel repository
-    
+      contents: write
+    outputs:
+      branch: ${{ github.event.inputs.branch }}
+      python_version: ${{ github.event.inputs.python_version }}
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        ref: ${{ github.event.inputs.branch }}
-        token: ${{ secrets.GITHUB_TOKEN }}  # Usa il token per i permessi
-    
-    - name: Set up Python ${{ github.event.inputs.python_version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ github.event.inputs.python_version }}
-    
-    - name: Cache pip dependencies
-      uses: actions/cache@v4
-      with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ hashFiles('models/python/db_structure_generator/requirements.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-pip-
-    
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r models/python/db_structure_generator/requirements.txt
-        pip install psycopg2-binary  # Per la connessione PostgreSQL
-    
-    - name: Verify Excel file exists
-      run: |
-        if [ ! -f "data/financialTracker.xlsx" ]; then
-          echo "❌ File data/financialTracker.xlsx non trovato!"
-          exit 1
-        fi
-        echo "✅ File Excel trovato"
-        ls -la data/financialTracker.xlsx
-    
-    - name: Create output directory
-      run: |
-        mkdir -p sql/ddl
-        echo "✅ Directory sql/ddl creata"
-    
-    - name: Generate database structure
-      run: |
-        cd models/python/db_structure_generator
-        python main.py
-    
-    - name: Verify generated SQL file
-      run: |
-        if [ ! -f "sql/ddl/financial_tracker_ddl.sql" ]; then
-          echo "❌ File SQL non generato!"
-          exit 1
-        fi
-        echo "✅ File SQL generato con successo"
-        echo "📊 Dimensione file: $(du -h sql/ddl/financial_tracker_ddl.sql | cut -f1)"
-        echo "📄 Prime 20 righe del file:"
-        head -20 sql/ddl/financial_tracker_ddl.sql
-    
-    - name: Upload SQL artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: database-ddl-${{ github.event.inputs.branch }}-py${{ github.event.inputs.python_version }}
-        path: sql/ddl/financial_tracker_ddl.sql
-        retention-days: 30
-    
-    # Deploy su PostgreSQL Neon (opzionale)
-    - name: Deploy to PostgreSQL Neon
-      if: github.event.inputs.deploy_to_neon == 'true'
-      env:
-        PGHOST: ${{ secrets.PGHOST }}
-        PGDATABASE: ${{ secrets.PGDATABASE }}
-        PGUSER: ${{ secrets.PGUSER }}
-        PGPASSWORD: ${{ secrets.PGPASSWORD }}
-        PGSSLMODE: ${{ secrets.PGSSLMODE }}
-      run: |
-        echo "🚀 Inizio deploy su PostgreSQL Neon..."
-        
-        # Test connessione database
-        python -c "
-        import psycopg2
-        import os
-        import sys
-        
-        try:
-            conn = psycopg2.connect(
-                host=os.environ['PGHOST'],
-                database=os.environ['PGDATABASE'],
-                user=os.environ['PGUSER'],
-                password=os.environ['PGPASSWORD'],
-                sslmode=os.environ['PGSSLMODE']
-            )
-            print('✅ Connessione al database riuscita')
-            
-            # Esegui il DDL
-            with conn.cursor() as cursor:
-                print('📖 Lettura file SQL...')
-                with open('sql/ddl/financial_tracker_ddl.sql', 'r', encoding='utf-8') as f:
-                    sql_content = f.read()
-                
-                print('🔄 Esecuzione DDL sul database...')
-                cursor.execute(sql_content)
-                conn.commit()
-                print('✅ DDL eseguito con successo!')
-                
-                # Verifica tabelle create
-                cursor.execute('''
-                    SELECT schemaname, tablename 
-                    FROM pg_tables 
-                    WHERE schemaname NOT IN ('information_schema', 'pg_catalog')
-                    ORDER BY schemaname, tablename;
-                ''')
-                tables = cursor.fetchall()
-                
-                print(f'📊 Tabelle create ({len(tables)}):')
-                for schema, table in tables:
-                    print(f'   - {schema}.{table}')
-            
-            conn.close()
-            print('🎉 DDL Deploy completato con successo!')
-            
-        except Exception as e:
-            print(f'❌ Errore durante il DDL deploy: {str(e)}')
-            sys.exit(1)
-        "
-    
-    # NUOVO: Popola tabelle con dati Excel
-    - name: Populate tables with Excel data
-      if: github.event.inputs.deploy_to_neon == 'true' && github.event.inputs.populate_data == 'true'
-      env:
-        PGHOST: ${{ secrets.PGHOST }}
-        PGDATABASE: ${{ secrets.PGDATABASE }}
-        PGUSER: ${{ secrets.PGUSER }}
-        PGPASSWORD: ${{ secrets.PGPASSWORD }}
-        PGSSLMODE: ${{ secrets.PGSSLMODE }}
-      run: |
-        echo "📊 Inizio popolamento tabelle con dati Excel..."
-        
-        cd models/python/db_structure_generator
-        
-        # Crea un script ETL dedicato che usa le variabili d'ambiente per la connessione Neon
-        python -c "
-        import os
-        import sys
-        import logging
-        from config import EXCEL_FILE
-        from extractor import extract_sheets
-        from etl import load_dataframe_to_table
-        import psycopg2
-        
-        # Setup logging
-        logging.basicConfig(level=logging.INFO)
-        logger = logging.getLogger('etl_neon')
-        
-        try:
-            # Connessione al database Neon usando variabili d'ambiente
-            conn = psycopg2.connect(
-                host=os.environ['PGHOST'],
-                database=os.environ['PGDATABASE'],
-                user=os.environ['PGUSER'],
-                password=os.environ['PGPASSWORD'],
-                sslmode=os.environ['PGSSLMODE']
-            )
-            print('✅ Connessione database ETL riuscita')
-            
-            # Estrai dati Excel
-            print('📖 Lettura file Excel per ETL...')
-            mapping = extract_sheets(EXCEL_FILE)
-            
-            # Gestisci tabella dates
-            dates_df = None
-            dates_schema = 'dates'
-            dates_table = 'dates'
-            dates_pk_col = 'date_id'
-            dates_date_col = None
-            
-            if (dates_schema, dates_table) in mapping:
-                dates_df = mapping.pop((dates_schema, dates_table))
-                # Rileva colonne come nel main.py
-                for c in dates_df.columns:
-                    if c.lower() == 'id' or c.lower().endswith('_id'):
-                        dates_pk_col = c
-                        break
-                for c in dates_df.columns:
-                    if 'date' in c.lower():
-                        dates_date_col = c
-                        break
-            
-            # Modifica temporaneamente la configurazione del database in etl.py
-            # (questo è un workaround - idealmente dovresti passare la connessione)
-            import etl
-            
-            # Backup configurazione originale
-            original_config = {}
-            if hasattr(etl, 'get_connection'):
-                # Sovrascrivi la funzione di connessione per usare Neon
-                def get_neon_connection():
-                    return psycopg2.connect(
-                        host=os.environ['PGHOST'],
-                        database=os.environ['PGDATABASE'],
-                        user=os.environ['PGUSER'],
-                        password=os.environ['PGPASSWORD'],
-                        sslmode=os.environ['PGSSLMODE']
-                    )
-                etl.get_connection = get_neon_connection
-            
-            # Esegui ETL per ogni tabella
-            total_rows = 0
-            for (schema, table), df in mapping.items():
-                try:
-                    print(f'📊 Caricamento dati per {schema}.{table} ({len(df)} righe)...')
-                    load_dataframe_to_table(schema, table, df)
-                    total_rows += len(df)
-                    print(f'✅ Dati caricati per {schema}.{table}')
-                except Exception as e:
-                    print(f'❌ Errore ETL per {schema}.{table}: {str(e)}')
-                    raise
-            
-            conn.close()
-            print(f'🎉 ETL completato! Totale righe caricate: {total_rows}')
-            
-        except Exception as e:
-            print(f'❌ Errore durante ETL: {str(e)}')
-            sys.exit(1)
-        "
-    
-    # Verifica finale dati
-    - name: Verify data population
-      if: github.event.inputs.deploy_to_neon == 'true' && github.event.inputs.populate_data == 'true'
-      env:
-        PGHOST: ${{ secrets.PGHOST }}
-        PGDATABASE: ${{ secrets.PGDATABASE }}
-        PGUSER: ${{ secrets.PGUSER }}
-        PGPASSWORD: ${{ secrets.PGPASSWORD }}
-        PGSSLMODE: ${{ secrets.PGSSLMODE }}
-      run: |
-        echo "🔍 Verifica popolamento dati..."
-        
-        python -c "
-        import psycopg2
-        import os
-        
-        conn = psycopg2.connect(
-            host=os.environ['PGHOST'],
-            database=os.environ['PGDATABASE'],
-            user=os.environ['PGUSER'],
-            password=os.environ['PGPASSWORD'],
-            sslmode=os.environ['PGSSLMODE']
-        )
-        
-        with conn.cursor() as cursor:
-            # Conta righe per ogni tabella
-            cursor.execute('''
-                SELECT schemaname, tablename 
-                FROM pg_tables 
-                WHERE schemaname NOT IN ('information_schema', 'pg_catalog')
-                ORDER BY schemaname, tablename;
-            ''')
-            tables = cursor.fetchall()
-            
-            total_rows = 0
-            print('📊 Righe per tabella:')
-            for schema, table in tables:
-                try:
-                    cursor.execute(f'SELECT COUNT(*) FROM {schema}.{table};')
-                    count = cursor.fetchone()[0]
-                    total_rows += count
-                    print(f'   - {schema}.{table}: {count} righe')
-                except Exception as e:
-                    print(f'   - {schema}.{table}: Errore conteggio ({str(e)})')
-            
-            print(f'📈 Totale righe nel database: {total_rows}')
-        
-        conn.close()
-        "
-    
-    - name: Database deployment summary
-      if: github.event.inputs.deploy_to_neon == 'true'
-      run: |
-        echo "🎉 Deploy su Neon completato!"
-        echo "🌐 Host: ${{ secrets.PGHOST }}"
-        echo "🗄️ Database: ${{ secrets.PGDATABASE }}"
-        echo "👤 User: ${{ secrets.PGUSER }}"
-        echo "🔒 SSL: Abilitato"
-        
-        if [ "${{ github.event.inputs.populate_data }}" == "true" ]; then
-          echo "📊 Popolamento dati: Abilitato"
-        else
-          echo "📊 Popolamento dati: Solo struttura"
-        fi
-    
-    - name: Display generation summary
-      run: |
-        echo "🎉 Generazione completata con successo!"
-        echo "📁 Branch utilizzato: ${{ github.event.inputs.branch }}"
-        echo "🐍 Python versione: ${{ github.event.inputs.python_version }}"
-        echo "📝 File generato: sql/ddl/financial_tracker_ddl.sql"
-        echo "💾 Artifact disponibile per il download per 30 giorni"
-        
-        if [ "${{ github.event.inputs.deploy_to_neon }}" == "true" ]; then
-          echo "🚀 Deploy su Neon: Abilitato"
-          if [ "${{ github.event.inputs.populate_data }}" == "true" ]; then
-            echo "📊 Popolamento dati: Completato"
-          else
-            echo "📊 Popolamento dati: Solo struttura"
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate user selections (at least one of Modeling/Provisioning/ETL)
+        run: |
+          echo "Validating workflow inputs..."
+          RM="${{ github.event.inputs.run_data_modeling }}"
+          RP="${{ github.event.inputs.run_data_provisioning }}"
+          RE="${{ github.event.inputs.run_etl }}"
+          DEPLOY="${{ github.event.inputs.deploy_to_neon }}"
+
+          echo " - run_data_modeling: $RM"
+          echo " - run_data_provisioning: $RP"
+          echo " - run_etl: $RE"
+          echo " - deploy_to_neon: $DEPLOY"
+
+          if [ "$RM" != "true" ] && [ "$RP" != "true" ] && [ "$RE" != "true" ]; then
+            echo "❌ Errore: almeno uno tra Data Modeling, Data Provisioning o ETL deve essere selezionato."
+            echo "Seleziona almeno uno dei flag: run_data_modeling, run_data_provisioning, run_etl"
+            exit 1
           fi
-        else
-          echo "🚀 Deploy su Neon: Disabilitato"
-        fi
-        
-        # Statistiche del file
-        if [ -f "sql/ddl/financial_tracker_ddl.sql" ]; then
-          echo ""
-          echo "📊 Statistiche file generato:"
-          echo "   - Righe: $(wc -l < sql/ddl/financial_tracker_ddl.sql)"
-          echo "   - Caratteri: $(wc -c < sql/ddl/financial_tracker_ddl.sql)"
-          echo "   - Dimensione: $(du -h sql/ddl/financial_tracker_ddl.sql | cut -f1)"
-        fi
-    
-    # Opzionale: Commit automatico del file generato
-    - name: Commit generated SQL (optional)
-      if: github.event.inputs.branch == 'main' || github.event.inputs.branch == 'develop'
-      run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        
-        if [ -n "$(git status --porcelain sql/ddl/)" ]; then
-          git add sql/ddl/financial_tracker_ddl.sql
-          git commit -m "🤖 Auto-generated database DDL from financialTracker.xlsx
-          
-          - Branch: ${{ github.event.inputs.branch }}
-          - Python: ${{ github.event.inputs.python_version }}
-          - Generated: $(date '+%Y-%m-%d %H:%M:%S UTC')"
-          
-          git push
-          echo "✅ File committato e pushato automaticamente"
-        else
-          echo "ℹ️ Nessuna modifica al file SQL da committare"
-        fi
+
+          # Se provisioning o ETL sono richiesti, deploy_to_neon deve essere true
+          if { [ "$RP" = "true" ] || [ "$RE" = "true" ]; } && [ "$DEPLOY" != "true" ]; then
+            echo "❌ Errore: Data Provisioning ed ETL richiedono 'deploy_to_neon' = true per connettersi al DB Neon."
+            echo " - Se vuoi eseguire solo il modelling (generare SQL) lascia deploy_to_neon=false."
+            echo " - Se vuoi deployare lo schema o popolare i dati imposta deploy_to_neon=true e configura i secrets PG*."
+            exit 1
+          fi
+
+          echo "✅ Validazione completata."
+      
+      - name: Verify Excel file exists (quick check)
+        run: |
+          if [ ! -f "data/financialTracker.xlsx" ]; then
+            echo "⚠️ File data/financialTracker.xlsx non trovato in repo. Se stai eseguendo Data Modeling/ETL assicurati che il file sia presente."
+            # Non falliamo qui: magari il job Modeling userà un file generato altrove.
+          else
+            echo "✅ File Excel trovato"
+            ls -la data/financialTracker.xlsx
+          fi
+
+      - name: Create output directory
+        run: |
+          mkdir -p sql/ddl
+          echo "✅ Directory sql/ddl creata (o già presente)"
+
+  # 2) Data Modeling (Estrazione Schema -> genera SQL)
+  data_modeling:
+    name: Data Modeling (generate DDL)
+    runs-on: ubuntu-latest
+    needs: initialization
+    if: ${{ github.event.inputs.run_data_modeling == 'true' }}
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch }}
+      
+      - name: Set up Python ${{ github.event.inputs.python_version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ github.event.inputs.python_version }}
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('models/python/db_structure_generator/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r models/python/db_structure_generator/requirements.txt
+          pip install psycopg2-binary
+
+      - name: Verify Excel file exists (modeling)
+        run: |
+          if [ ! -f "data/financialTracker.xlsx" ]; then
+            echo "❌ File data/financialTracker.xlsx non trovato! (necessario per il Data Modeling)"
+            exit 1
+          fi
+          echo "✅ File Excel trovato"
+
+      - name: Generate database structure (run generator)
+        run: |
+          cd models/python/db_structure_generator
+          python main.py
+
+      - name: Verify generated SQL file
+        run: |
+          if [ ! -f "sql/ddl/financial_tracker_ddl.sql" ]; then
+            echo "❌ File SQL non generato!"
+            exit 1
+          fi
+          echo "✅ File SQL generato con successo"
+          echo "📊 Dimensione file: $(du -h sql/ddl/financial_tracker_ddl.sql | cut -f1)"
+          echo "📄 Prime 10 righe del file:"
+          head -10 sql/ddl/financial_tracker_ddl.sql
+
+      - name: Upload SQL artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: database-ddl-${{ github.event.inputs.branch }}-py${{ github.event.inputs.python_version }}
+          path: sql/ddl/financial_tracker_ddl.sql
+          retention-days: 30
+
+  # 3) Data Provisioning (deploy schema su DB Neon) - opzionale
+  data_provisioning:
+    name: Data Provisioning (deploy schema to Neon)
+    runs-on: ubuntu-latest
+    needs: initialization
+    if: ${{ github.event.inputs.run_data_provisioning == 'true' }}
+    permissions:
+      contents: write
+    env:
+      PGHOST: ${{ secrets.PGHOST }}
+      PGDATABASE: ${{ secrets.PGDATABASE }}
+      PGUSER: ${{ secrets.PGUSER }}
+      PGPASSWORD: ${{ secrets.PGPASSWORD }}
+      PGSSLMODE: ${{ secrets.PGSSLMODE }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch }}
+
+      - name: Try download SQL artifact from this run (if Data Modeling ran)
+        uses: actions/download-artifact@v4
+        with:
+          name: database-ddl-${{ github.event.inputs.branch }}-py${{ github.event.inputs.python_version }}
+          path: sql/ddl
+        continue-on-error: true
+
+      - name: Locate SQL file (artifact or repo)
+        run: |
+          if [ -f "sql/ddl/financial_tracker_ddl.sql" ]; then
+            echo "✅ SQL file found at sql/ddl/financial_tracker_ddl.sql"
+          elif [ -f "sql/ddl/financial_tracker_ddl.sql" ]; then
+            # redundant but explicit
+            echo "✅ SQL file found in repo"
+          else
+            echo "❌ Nessun file SQL disponibile per il deploy."
+            echo "Azioni possibili:"
+            echo " - Esegui prima il job Data Modeling in questa workflow (run_data_modeling=true)"
+            echo " - Oppure assicurati che sql/ddl/financial_tracker_ddl.sql esista nel branch selezionato"
+            exit 1
+          fi
+
+      - name: Set up Python (for psycopg2)
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ github.event.inputs.python_version }}
+
+      - name: Install psycopg2
+        run: |
+          python -m pip install --upgrade pip
+          pip install psycopg2-binary
+
+      - name: Deploy DDL to PostgreSQL Neon
+        run: |
+          echo "🚀 Inizio deploy su PostgreSQL Neon..."
+          python - <<'PY'
+import psycopg2, os, sys
+try:
+    conn = psycopg2.connect(
+        host=os.environ['PGHOST'],
+        database=os.environ['PGDATABASE'],
+        user=os.environ['PGUSER'],
+        password=os.environ['PGPASSWORD'],
+        sslmode=os.environ.get('PGSSLMODE', 'require')
+    )
+    with conn.cursor() as cursor:
+        print('📖 Lettura file SQL...')
+        with open('sql/ddl/financial_tracker_ddl.sql', 'r', encoding='utf-8') as f:
+            sql_content = f.read()
+        print('🔄 Esecuzione DDL sul database...')
+        cursor.execute(sql_content)
+        conn.commit()
+        print('✅ DDL eseguito con successo!')
+        cursor.execute("""
+            SELECT schemaname, tablename 
+            FROM pg_tables 
+            WHERE schemaname NOT IN ('information_schema', 'pg_catalog')
+            ORDER BY schemaname, tablename;
+        """)
+        tables = cursor.fetchall()
+        print(f'📊 Tabelle create ({len(tables)}):')
+        for schema, table in tables:
+            print(f'   - {schema}.{table}')
+    conn.close()
+    print('🎉 DDL Deploy completato con successo!')
+except Exception as e:
+    print(f'❌ Errore durante il DDL deploy: {e}')
+    sys.exit(1)
+PY
+
+  # 4) ETL (popolazione tabelle) - opzionale e indipendente
+  etl:
+    name: ETL (populate tables)
+    runs-on: ubuntu-latest
+    needs: initialization
+    if: ${{ github.event.inputs.run_etl == 'true' }}
+    permissions:
+      contents: write
+    env:
+      PGHOST: ${{ secrets.PGHOST }}
+      PGDATABASE: ${{ secrets.PGDATABASE }}
+      PGUSER: ${{ secrets.PGUSER }}
+      PGPASSWORD: ${{ secrets.PGPASSWORD }}
+      PGSSLMODE: ${{ secrets.PGSSLMODE }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch }}
+
+      - name: Try download SQL artifact from this run (optional)
+        uses: actions/download-artifact@v4
+        with:
+          name: database-ddl-${{ github.event.inputs.branch }}-py${{ github.event.inputs.python_version }}
+          path: sql/ddl
+        continue-on-error: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ github.event.inputs.python_version }}
+
+      - name: Install ETL dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r models/python/db_structure_generator/requirements.txt || true
+          pip install psycopg2-binary openpyxl pandas || true
+
+      - name: Run ETL script to populate tables
+        run: |
+          echo "📊 Inizio ETL (popolamento tabelle)..."
+          cd models/python/db_structure_generator
+          python - <<'PY'
+import os, sys
+try:
+    # Questo script si aspetta che nel repo ci siano i moduli extractor/etl come nel progetto originale.
+    # Si connette al DB usando le variabili d'ambiente PG* e chiama le funzioni etl.load_dataframe_to_table come implementato nel repo.
+    from config import EXCEL_FILE
+    from extractor import extract_sheets
+    from etl import load_dataframe_to_table, get_connection
+    import psycopg2
+    import logging
+    logging.basicConfig(level=logging.INFO)
+
+    # Estrai dati dall'excel
+    mapping = extract_sheets(EXCEL_FILE)
+
+    # Sovrascrivi la funzione di connessione per usare variabili d'ambiente (se esiste)
+    try:
+        def neon_conn():
+            return psycopg2.connect(
+                host=os.environ['PGHOST'],
+                database=os.environ['PGDATABASE'],
+                user=os.environ['PGUSER'],
+                password=os.environ['PGPASSWORD'],
+                sslmode=os.environ.get('PGSSLMODE', 'require')
+            )
+        # Se etl.get_connection esiste, sovrascrivilo
+        import etl as etl_module
+        if hasattr(etl_module, 'get_connection'):
+            etl_module.get_connection = neon_conn
+    except Exception:
+        pass
+
+    total = 0
+    for (schema, table), df in mapping.items():
+        print(f"Caricamento {schema}.{table} - {len(df)} righe")
+        load_dataframe_to_table(schema, table, df)
+        total += len(df)
+    print(f"ETL completato, righe caricate: {total}")
+except Exception as e:
+    print("❌ Errore ETL:", e)
+    sys.exit(1)
+PY
+
+  # 5) Chiusura / summary / (optional commit)
+  closure:
+    name: Closure & summary
+    runs-on: ubuntu-latest
+    needs: [initialization, data_modeling, data_provisioning, etl]
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch }}
+
+      - name: Display run summary
+        run: |
+          echo "🎉 Workflow summary"
+          echo " - Branch: ${{ github.event.inputs.branch }}"
+          echo " - Python: ${{ github.event.inputs.python_version }}"
+          echo " - run_data_modeling: ${{ github.event.inputs.run_data_modeling }}"
+          echo " - run_data_provisioning: ${{ github.event.inputs.run_data_provisioning }}"
+          echo " - run_etl: ${{ github.event.inputs.run_etl }}"
+          echo " - deploy_to_neon: ${{ github.event.inputs.deploy_to_neon }}"
+          echo " - populate_data: ${{ github.event.inputs.populate_data }}"
+
+          if [ -f "sql/ddl/financial_tracker_ddl.sql" ]; then
+            echo ""
+            echo "📄 File SQL presente in repo: sql/ddl/financial_tracker_ddl.sql"
+            echo "   - Righe: $(wc -l < sql/ddl/financial_tracker_ddl.sql)"
+            echo "   - Caratteri: $(wc -c < sql/ddl/financial_tracker_ddl.sql)"
+            echo "   - Dimensione: $(du -h sql/ddl/financial_tracker_ddl.sql | cut -f1)"
+          else
+            echo "ℹ️ File SQL non presente in repo (potrebbe essere stato generato come artifact nella job Data Modeling)."
+          fi
+
+      - name: Optional: Commit generated SQL back to branch (main/develop)
+        if: (github.event.inputs.branch == 'main' || github.event.inputs.branch == 'develop') && github.event.inputs.run_data_modeling == 'true'
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+
+          if [ -n "$(git status --porcelain sql/ddl/)" ]; then
+            git add sql/ddl/financial_tracker_ddl.sql
+            git commit -m "🤖 Auto-generated database DDL from financialTracker.xlsx
+
+- Branch: ${{ github.event.inputs.branch }}
+- Python: ${{ github.event.inputs.python_version }}
+- Generated: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+            git push
+            echo "✅ File committato e pushato automaticamente"
+          else
+            echo "ℹ️ Nessuna modifica al file SQL da committare"
+          fi
