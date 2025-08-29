@@ -48,7 +48,47 @@ on:
 
 jobs:
   # -------------------------------------------------------
-  # 1) Data Modeling (genera DDL) - indipendente
+  # 1) Inizializzazione - SEMPRE
+  # -------------------------------------------------------
+  initialization:
+    name: Initialization & validation
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Display workflow inputs
+        run: |
+          echo "🚀 Workflow avviato con le seguenti opzioni:"
+          echo " - Branch: ${{ github.event.inputs.branch }}"
+          echo " - Python: ${{ github.event.inputs.python_version }}"
+          echo " - run_data_modeling: ${{ github.event.inputs.run_data_modeling }}"
+          echo " - run_data_provisioning: ${{ github.event.inputs.run_data_provisioning }}"
+          echo " - run_etl: ${{ github.event.inputs.run_etl }}"
+          echo " - deploy_to_neon: ${{ github.event.inputs.deploy_to_neon }}"
+          echo " - populate_data: ${{ github.event.inputs.populate_data }}"
+
+      - name: Check Excel file presence
+        run: |
+          if [ ! -f "data/financialTracker.xlsx" ]; then
+            echo "⚠️ File data/financialTracker.xlsx non trovato in repo"
+          else
+            echo "✅ File Excel trovato"
+            ls -la data/financialTracker.xlsx
+          fi
+
+      - name: Create output directory
+        run: |
+          mkdir -p sql/ddl
+          echo "✅ Directory sql/ddl preparata"
+
+  # -------------------------------------------------------
+  # 2) Data Modeling - SOLO SE SELEZIONATO
   # -------------------------------------------------------
   data_modeling:
     name: Data Modeling (generate DDL)
@@ -79,7 +119,6 @@ jobs:
       - name: Create output directory
         run: |
           mkdir -p sql/ddl
-          echo "✅ Directory sql/ddl creata"
 
       - name: Install dependencies
         run: |
@@ -108,8 +147,6 @@ jobs:
           fi
           echo "✅ File SQL generato con successo"
           echo "📊 Dimensione file: $(du -h sql/ddl/financial_tracker_ddl.sql | cut -f1)"
-          echo "📄 Prime 10 righe del file:"
-          head -10 sql/ddl/financial_tracker_ddl.sql
 
       - name: Upload SQL artifact
         uses: actions/upload-artifact@v4
@@ -118,7 +155,7 @@ jobs:
           path: sql/ddl/financial_tracker_ddl.sql
           retention-days: 30
 
-      - name: Auto-commit generated SQL (main/develop only)
+      - name: Auto-commit generated SQL
         if: github.event.inputs.branch == 'main' || github.event.inputs.branch == 'develop'
         run: |
           git config --local user.email "action@github.com"
@@ -133,12 +170,12 @@ jobs:
           fi
 
   # -------------------------------------------------------
-  # 2) Data Provisioning (deploy schema su Neon) - indipendente
+  # 3) Data Provisioning - SOLO SE SELEZIONATO
   # -------------------------------------------------------
   data_provisioning:
     name: Data Provisioning (deploy schema to Neon)
     runs-on: ubuntu-latest
-    if: ${{ github.event.inputs.run_data_provisioning == 'true' }}
+    if: ${{ github.event.inputs.run_data_provisioning == 'true' && github.event.inputs.deploy_to_neon == 'true' }}
     permissions:
       contents: write
     env:
@@ -148,14 +185,6 @@ jobs:
       PGPASSWORD: ${{ secrets.PGPASSWORD }}
       PGSSLMODE: ${{ secrets.PGSSLMODE }}
     steps:
-      - name: Validate prerequisites
-        run: |
-          if [ "${{ github.event.inputs.deploy_to_neon }}" != "true" ]; then
-            echo "❌ Errore: Data Provisioning richiede 'deploy_to_neon' = true"
-            exit 1
-          fi
-          echo "✅ Validazione completata"
-
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -171,15 +200,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install psycopg2-binary
 
-      - name: Locate SQL file
+      - name: Verify SQL file exists
         run: |
-          if [ -f "sql/ddl/financial_tracker_ddl.sql" ]; then
-            echo "✅ SQL file found at sql/ddl/financial_tracker_ddl.sql"
-          else
+          if [ ! -f "sql/ddl/financial_tracker_ddl.sql" ]; then
             echo "❌ File sql/ddl/financial_tracker_ddl.sql non trovato nel repository"
             echo "   Esegui prima il Data Modeling per generare il file DDL"
             exit 1
           fi
+          echo "✅ SQL file trovato"
 
       - name: Create deploy script
         run: |
@@ -223,12 +251,12 @@ jobs:
           python deploy_ddl.py
 
   # -------------------------------------------------------
-  # 3) ETL (popolamento tabelle) - indipendente
+  # 4) ETL - SOLO SE SELEZIONATO
   # -------------------------------------------------------
   etl:
     name: ETL (populate tables)
     runs-on: ubuntu-latest
-    if: ${{ github.event.inputs.run_etl == 'true' }}
+    if: ${{ github.event.inputs.run_etl == 'true' && github.event.inputs.deploy_to_neon == 'true' }}
     permissions:
       contents: write
     env:
@@ -238,14 +266,6 @@ jobs:
       PGPASSWORD: ${{ secrets.PGPASSWORD }}
       PGSSLMODE: ${{ secrets.PGSSLMODE }}
     steps:
-      - name: Validate prerequisites
-        run: |
-          if [ "${{ github.event.inputs.deploy_to_neon }}" != "true" ]; then
-            echo "❌ Errore: ETL richiede 'deploy_to_neon' = true"
-            exit 1
-          fi
-          echo "✅ Validazione completata"
-
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -315,3 +335,28 @@ jobs:
           echo "📊 Inizio ETL (popolamento tabelle)..."
           cd models/python/db_structure_generator
           python run_etl.py
+
+  # -------------------------------------------------------
+  # 5) Chiusura - SEMPRE
+  # -------------------------------------------------------
+  closure:
+    name: Closure & summary
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch }}
+
+      - name: Display run summary
+        run: |
+          echo "🎉 Workflow summary"
+          echo " - Branch: ${{ github.event.inputs.branch }}"
+          echo " - Python: ${{ github.event.inputs.python_version }}"
+          echo " - run_data_modeling: ${{ github.event.inputs.run_data_modeling }}"
+          echo " - run_data_provisioning: ${{ github.event.inputs.run_data_provisioning }}"
+          echo " - run_etl: ${{ github.event.inputs.run_etl }}"
+          echo " - deploy_to_neon: ${{ github.event.inputs.deploy_to_neon }}"
+          echo " - populate_data: ${{ github.event.inputs.populate_data }}"
